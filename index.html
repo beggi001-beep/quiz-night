@@ -215,7 +215,10 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
     <div id="hQr" class="qr" title="Scan with the phone camera"></div>
     <div class="invite-side">
       <p class="muted">📷 Scan with the phone camera, or send the invite:</p>
-      <button class="btn small" id="hShare">📤 Share invite</button>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <button class="btn small" id="hCopy">📋 Copy invite</button>
+        <button class="btn small ghost" id="hShare">📤 Share…</button>
+      </div>
       <p class="hint" id="hShareMsg"></p>
     </div>
   </div>
@@ -240,7 +243,13 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
     <p class="hint">Right answers score 10, plus up to 5 bonus points for being fast.</p>
   </div>
   <div class="panel"><h2>🗂️ Categories</h2><div class="seg" id="hCats"></div></div>
-  <div class="stack"><button class="btn" id="hStart" disabled>Start the game 🚀</button></div>
+  <div class="panel">
+    <h2>⏰ Start time</h2>
+    <div class="seg" id="hAuto"></div>
+    <p class="hint">Pick a time and the game starts by itself when the countdown ends — everyone who has joined by then plays. The invite says when it starts.</p>
+    <div class="bigtimer" id="hAutoCount" style="display:none;font-size:clamp(2.6rem,10vw,4rem)"></div>
+  </div>
+  <div class="stack"><button class="btn" id="hStart" disabled>Start now 🚀</button></div>
 </section>
 
 <!-- HOST: QUESTION -->
@@ -399,6 +408,7 @@ $("#pickHost").onclick=async()=>{
   PEERS=[];
   $("#hCode").textContent=code;
   renderInvite(code);
+  renderHostAuto(); $("#hAutoCount").style.display="none";
   renderHostSettings(); renderHostMe(); renderHostLobby(); show("#s-hlobby");
   const g=f.r("games/"+code);
   try{
@@ -423,11 +433,48 @@ async function renderInvite(code){
   const link=inviteLink(code), box=$("#hQr"); box.innerHTML=""; $("#hShareMsg").textContent="";
   try{ const Q=await loadQrLib(); new Q(box,{text:link,width:300,height:300,colorDark:"#0b1026",colorLight:"#ffffff",correctLevel:Q.CorrectLevel.M}); }catch(e){ box.innerHTML=""; }
 }
+function clock(ms){ const d=new Date(ms); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
+function inviteText(){
+  const when = H.startAt ? ` Starts at ${clock(H.startAt-(FB?FB.now()-Date.now():0))}.` : "";
+  return `Quiz night! 🎉${when} Join with code ${H.code}: ${inviteLink(H.code)}`;
+}
+$("#hCopy").onclick=async()=>{
+  if(!H) return;
+  const text=inviteText();
+  try{ await navigator.clipboard.writeText(text); $("#hShareMsg").textContent="✅ Copied! Paste it into Messenger or a text message (Ctrl + V)."; }
+  catch(e){ $("#hShareMsg").textContent=text; }
+};
+/* auto-start countdown */
+let hAutoTick=null;
+function renderHostAuto(){
+  const cur=H&&H.autoMin||0;
+  seg($("#hAuto"),[[0,"Off"],[2,"2 min"],[5,"5 min"],[10,"10 min"],[15,"15 min"]],()=>cur,v=>setAuto(v));
+}
+function setAuto(min){
+  if(!H) return;
+  H.autoMin=min; H.startAt = min? FB.now()+min*60000 : null;
+  clearInterval(hAutoTick);
+  const el=$("#hAutoCount");
+  if(!min){ el.style.display="none"; renderHostAuto(); hostEmit(); return; }
+  el.style.display="";
+  const tick=()=>{
+    if(!H||H.phase!=="lobby"){clearInterval(hAutoTick);el.style.display="none";return}
+    const left=Math.max(0,Math.ceil((H.startAt-FB.now())/1000));
+    el.textContent=`Starts in ${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`;
+    if(left<=0){
+      clearInterval(hAutoTick); el.style.display="none";
+      if(Object.keys(H.players).length){ $("#hStart").click(); }
+      else { el.style.display=""; el.textContent="Nobody joined 😢"; H.autoMin=0; H.startAt=null; renderHostAuto(); hostEmit(); }
+    }
+  };
+  tick(); hAutoTick=setInterval(tick,500);
+  renderHostAuto(); hostEmit();
+}
 $("#hShare").onclick=async()=>{
   if(!H) return;
-  const link=inviteLink(H.code), text=`Quiz night! 🎉 Join with code ${H.code}: ${link}`;
+  const link=inviteLink(H.code), text=inviteText();
   try{
-    if(navigator.share){ await navigator.share({title:"Family Quiz Night",text:`Quiz night! 🎉 Join with code ${H.code}`,url:link}); return; }
+    if(navigator.share){ await navigator.share({title:"Family Quiz Night",text:text.replace(": "+link,""),url:link}); return; }
   }catch(e){ if(e&&e.name==="AbortError") return; }
   try{ await navigator.clipboard.writeText(text); $("#hShareMsg").textContent="Invite copied — paste it into Messenger or a text message."; }
   catch(e){ $("#hShareMsg").textContent=text; }
@@ -512,7 +559,7 @@ function draw(level){
   const q=it.q, opts=shuffle([q[2],q[3],q[4],q[5]]);
   return {c:q[0],t:q[1],o:opts,k:opts.indexOf(q[2])};
 }
-$("#hStart").onclick=()=>{ if(!H) return; beep("tick"); Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; hostNextQ(); };
+$("#hStart").onclick=()=>{ if(!H) return; beep("tick"); clearInterval(hAutoTick); H.autoMin=0; H.startAt=null; $("#hAutoCount").style.display="none"; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; hostNextQ(); };
 $("#hAgain").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; hostNextQ(); };
 function hostNextQ(){
   H.round++; H.rid=Date.now()%1e9; H.answers={}; H.phase="q";
@@ -608,7 +655,7 @@ function hostEmit(){
   if(!H||!FB) return;
   const sc=sortedPlayers().map(([k,p])=>({k,n:p.name,e:p.emoji,s:p.score}));
   const st={ph:H.phase,code:H.code,round:H.round,total:hSettings.rounds,sc};
-  if(H.phase==="lobby") st.pl=Object.keys(H.players);
+  if(H.phase==="lobby"){ st.pl=Object.keys(H.players); if(H.startAt) st.startAt=H.startAt; }
   if(H.phase==="q"||H.phase==="rev"){
     st.rid=H.rid; st.lv={}; Object.entries(H.players).forEach(([k,p])=>st.lv[k]=p.level);
   }
@@ -683,7 +730,18 @@ function playerState(st){
   const sc=myScore(st); $("#ppScore").textContent=`${sc?sc.s:0} pts`;
   if(st.ph==="lobby"){
     const inList=(st.pl||[]).includes(P.key);
-    if(!prev||prev.ph!=="lobby"||P.inList!==inList){ P.inList=inList; pWait(inList?"You're in! 🎉":"Joining…", inList?"Get ready — the game starts soon.":"Hold on a moment."); }
+    const sa=st.startAt||null;
+    if(!prev||prev.ph!=="lobby"||P.inList!==inList||P.startAt!==sa){
+      P.inList=inList; P.startAt=sa;
+      pWait(inList?"You're in! 🎉":"Joining…", inList?(sa?`Starts at ${clock(sa-(FB.now()-Date.now()))}`:"Get ready — the game starts soon."):"Hold on a moment.");
+      clearInterval(pTimer);
+      if(sa){
+        $("#ppBody").insertAdjacentHTML("beforeend",`<div class="bigtimer" id="ppCount" style="font-size:clamp(2.6rem,12vw,4rem)"></div>`);
+        const t=()=>{const el=$("#ppCount"); if(!el){clearInterval(pTimer);return}
+          const left=Math.max(0,Math.ceil((sa-FB.now())/1000)); el.textContent=`${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`;};
+        t(); pTimer=setInterval(t,500);
+      }
+    }
   }
   else if(st.ph==="q"){
     const lvl=(st.lv&&st.lv[P.key])||me.level, q=st.qs&&st.qs[lvl];
