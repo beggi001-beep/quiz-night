@@ -1,9 +1,9 @@
-// STEP: Paste your Firebase settings here (see README.md, part 2).
-// Replace everything between the { } with the firebaseConfig values Firebase shows you.
 export const FIREBASE_CONFIG = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE_AUTH_DOMAIN",
-  databaseURL: "PASTE_DATABASE_URL",
-  projectId: "PASTE_PROJECT_ID",
-  appId: "PASTE_APP_ID"
+  apiKey: "AIzaSyDrOkVAe92XnhqyfSGm82V2uLqJn6z1w84",
+  authDomain: "quiz-night-f6382.firebaseapp.com",
+  databaseURL: "https://quiz-night-f6382-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "quiz-night-f6382",
+  storageBucket: "quiz-night-f6382.firebasestorage.app",
+  messagingSenderId: "166555458149",
+  appId: "1:166555458149:web:f4e3b05956c4a28895848c"
 };
