@@ -175,6 +175,14 @@ canvas#confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 .rolecards{grid-template-columns:1fr}
 @media (min-width:640px){.rolecards{grid-template-columns:1fr 1fr 1fr}}
 a.rolecard{color:inherit;text-decoration:none;display:block}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:12px 0}
+.vchip{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:10px 8px;font-size:1rem;font-weight:500;text-align:left;display:flex;gap:6px;align-items:center;transition:all .15s}
+.vchip.on{border-color:var(--green);background:rgba(62,224,143,.18)}
+.vchip[disabled]{opacity:.45}
+.vcount{text-align:center;font-weight:600;font-size:1.2rem;margin:4px 0}
+.vwin{display:flex;align-items:center;gap:12px;background:var(--card);border:2px solid var(--gold);border-radius:18px;padding:12px 16px;margin-bottom:10px;font-size:1.3rem;font-weight:600}
+.vwin .e{font-size:2rem}
+.banner{background:rgba(255,209,102,.12);border:2px dashed var(--gold);border-radius:16px;padding:12px;text-align:center;margin-bottom:12px}
 .invite{display:flex;gap:18px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:12px}
 .qr{background:#fff;padding:10px;border-radius:16px;line-height:0}
 .qr:empty{display:none}
@@ -242,7 +250,12 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
     <div class="row"><span class="label">Time per question</span><div class="seg" id="hTimer"></div></div>
     <p class="hint">Right answers score 10, plus up to 5 bonus points for being fast.</p>
   </div>
-  <div class="panel"><h2>🗂️ Categories</h2><div class="seg" id="hCats"></div></div>
+  <div class="panel">
+    <h2>🗳️ Topic vote</h2>
+    <div class="seg" id="hVote"></div>
+    <p class="hint">Everyone picks 5 of the 30 topics on their phone, and the 5 with the most votes win. Ties are settled with a new vote between the tied topics, again and again (after 3 tie-breaks it's drawn by lot).</p>
+  </div>
+  <div class="panel" id="hCatsPanel"><h2>🗂️ Categories</h2><div class="seg" id="hCats"></div></div>
   <div class="panel">
     <h2>⏰ Start time</h2>
     <div class="seg" id="hAuto"></div>
@@ -250,6 +263,26 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
     <div class="bigtimer" id="hAutoCount" style="display:none;font-size:clamp(2.6rem,10vw,4rem)"></div>
   </div>
   <div class="stack"><button class="btn" id="hStart" disabled>Start now 🚀</button></div>
+</section>
+
+<!-- HOST: VOTE -->
+<section class="screen" id="s-hvote">
+  <div class="topbar"><span class="tag" id="hvTag">Topic vote</span><button class="iconbtn" data-home title="End game">✕</button></div>
+  <div id="hvBanner"></div>
+  <h1 style="font-size:clamp(1.6rem,6vw,2.6rem)" id="hvTitle">🗳️ Vote on your phone!</h1>
+  <div class="bigtimer" id="hvTimer"></div>
+  <p class="status" id="hvStatus"></p>
+  <div id="hvMine"></div>
+  <div class="tiles" id="hvTiles"></div>
+  <div class="stack"><button class="btn ghost" id="hvNow">Count the votes now</button></div>
+</section>
+
+<!-- HOST: VOTE RESULT -->
+<section class="screen" id="s-hvres">
+  <h1>🏆 Tonight's topics</h1>
+  <p class="sub" id="hvrSub"></p>
+  <div id="hvrList"></div>
+  <div class="stack"><button class="btn" id="hvrGo">Start the quiz 🚀</button></div>
 </section>
 
 <!-- HOST: QUESTION -->
@@ -277,7 +310,8 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
   <div class="podium" id="hPodium"></div>
   <div class="board" id="hFinBoard"></div>
   <div class="stack">
-    <button class="btn" id="hAgain">Play again with the same players 🔁</button>
+    <button class="btn" id="hAgain">Play again — same topics 🔁</button>
+    <button class="btn ghost" id="hRevote">Play again — new topic vote 🗳️</button>
     <button class="btn ghost" data-home>Back to start</button>
   </div>
 </section>
@@ -408,7 +442,7 @@ $("#pickHost").onclick=async()=>{
   PEERS=[];
   $("#hCode").textContent=code;
   renderInvite(code);
-  renderHostAuto(); $("#hAutoCount").style.display="none";
+  renderHostAuto(); $("#hAutoCount").style.display="none"; renderHostVoteSetting();
   renderHostSettings(); renderHostMe(); renderHostLobby(); show("#s-hlobby");
   const g=f.r("games/"+code);
   try{
@@ -480,7 +514,7 @@ $("#hShare").onclick=async()=>{
   catch(e){ $("#hShareMsg").textContent=text; }
 };
 function alertBox(msg){ $("#noFb").innerHTML=esc(msg); $("#noFb").style.display=""; }
-function stopHost(){clearInterval(hTick);H=null}
+function stopHost(){clearInterval(hTick);clearInterval(hvTick);H=null}
 
 function renderHostSettings(){
   seg($("#hRounds"),[[5,"5"],[8,"8"],[10,"10"],[15,"15"]],()=>hSettings.rounds,v=>{hSettings.rounds=v;hSave()});
@@ -523,6 +557,10 @@ function hostPeers(){
     pl.emoji = EMOJIS.includes(pr.emoji)?pr.emoji:pl.emoji;
     if(H.phase==="lobby"||H.phase==="fin") pl.level = LVL[pr.level]?pr.level:"m";
     pl.name=name;
+    if(H.phase==="vote" && pr.vote && pr.vote.r===H.vid){
+      const t=(Array.isArray(pr.vote.t)?pr.vote.t:Object.values(pr.vote.t||{})).filter(x=>H.vopts.includes(x)).slice(0,H.vpick);
+      H.votes[k]={t,done:!!pr.vote.done};
+    }
     if(H.phase==="q" && pr.ans && pr.ans.r===H.rid && H.answers[k]===undefined && H.cur.qs[pl.level]){
       const i=pr.ans.i|0; if(i>=0&&i<4){ H.answers[k]={i,t:Date.now()}; beep("ding"); }
     }
@@ -530,6 +568,7 @@ function hostPeers(){
   Object.entries(H.players).forEach(([k,pl])=>pl.live=live.has(k)||!!pl.local);
   if(H.phase==="lobby"){ Object.keys(H.players).forEach(k=>{if(!live.has(k)&&!H.players[k].local)delete H.players[k]}); renderHostLobby(); hostEmit(); }
   if(H.phase==="q") hostCheckAll();
+  if(H.phase==="vote") hostCheckVote();
 }
 function hostCheckAll(){
   const need=Object.entries(H.players).filter(([k,p])=>p.live&&H.cur.qs[p.level]);
@@ -546,7 +585,12 @@ function renderHostLobby(){
 }
 
 function buildDeck(level){
-  const all=BANK[level].map((q,i)=>({q,id:level+i})).filter(x=>hSettings.cats.includes(x.q[0]));
+  const cats=(H&&H.cats)||hSettings.cats;
+  let all=BANK[level].map((q,i)=>({q,id:level+i})).filter(x=>cats.includes(x.q[0]));
+  if(all.length<hSettings.rounds){ // chosen topics too small for this level: top up from the others
+    const extra=shuffle(BANK[level].map((q,i)=>({q,id:level+i})).filter(x=>!cats.includes(x.q[0])));
+    all=all.concat(extra.slice(0,hSettings.rounds-all.length+2));
+  }
   let fresh=all.filter(x=>!seen[x.id]);
   if(fresh.length<hSettings.rounds){all.forEach(x=>delete seen[x.id]);fresh=all}
   const byCat={};shuffle(fresh).forEach(x=>(byCat[x.q[0]]=byCat[x.q[0]]||[]).push(x));
@@ -559,8 +603,107 @@ function draw(level){
   const q=it.q, opts=shuffle([q[2],q[3],q[4],q[5]]);
   return {c:q[0],t:q[1],o:opts,k:opts.indexOf(q[2])};
 }
-$("#hStart").onclick=()=>{ if(!H) return; beep("tick"); clearInterval(hAutoTick); H.autoMin=0; H.startAt=null; $("#hAutoCount").style.display="none"; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; hostNextQ(); };
+$("#hStart").onclick=()=>{ if(!H) return; beep("tick"); clearInterval(hAutoTick); H.autoMin=0; H.startAt=null; $("#hAutoCount").style.display="none";
+  Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={};
+  if(hSettings.vote!==false) startVote(); else { H.cats=null; hostNextQ(); } };
 $("#hAgain").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; hostNextQ(); };
+$("#hRevote").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; startVote(); };
+
+/* ======================= TOPIC VOTE ======================= */
+const VOTE_SECS=60, VOTE_PICK=5, MAX_TIEBREAKS=3;
+let hvTick=null;
+function renderHostVoteSetting(){
+  seg($("#hVote"),[[true,"On — everyone votes"],[false,"Off — I pick"]],()=>hSettings.vote!==false,v=>{hSettings.vote=v;hSave();renderHostVoteSetting()});
+  $("#hCatsPanel").style.display = hSettings.vote!==false ? "none" : "";
+}
+/* shared chip grid for picking topics */
+function voteGrid(box, opts, pick, picks, onChange, locked){
+  box.innerHTML=`<div class="vcount">${picks.length} / ${pick} chosen</div><div class="vgrid"></div>`;
+  const g=box.querySelector(".vgrid");
+  opts.forEach(k=>{ const c=CATS[k]; if(!c) return;
+    const b=document.createElement("button"); b.className="vchip"+(picks.includes(k)?" on":"");
+    b.innerHTML=`<span>${c.e}</span><span>${esc(c.n)}</span>`;
+    b.disabled = locked || (!picks.includes(k) && picks.length>=pick);
+    b.onclick=()=>{ const i=picks.indexOf(k); if(i>=0) picks.splice(i,1); else if(picks.length<pick) picks.push(k); beep("tick"); onChange(picks); };
+    g.appendChild(b);
+  });
+}
+function startVote(){
+  H.won=[]; H.tiebreaks=0; H.vlot=false; H.cats=null;
+  voteRound(Object.keys(CATS), VOTE_PICK, false);
+}
+function voteRound(opts, pick, tie){
+  H.phase="vote"; H.vid=Date.now()%1e9; H.votes={}; H.vopts=opts; H.vpick=pick; H.vtie=tie;
+  H.vstart=Date.now(); H.vEndsAt=FB.now()+VOTE_SECS*1000;
+  $("#hvTag").textContent = tie ? `Tie-break ${H.tiebreaks}` : "Topic vote";
+  $("#hvBanner").innerHTML = tie ? `<div class="banner"><b>It's a tie! 🤝</b><br>Vote again between the tied topics — pick ${pick}.${H.won.length?`<br>Already chosen: ${H.won.map(k=>CATS[k].e+" "+esc(CATS[k].n)).join(", ")}`:""}</div>` : "";
+  $("#hvTitle").textContent = tie ? `🗳️ Tie-break: pick ${pick}!` : `🗳️ Pick ${pick} topics on your phone!`;
+  show("#s-hvote"); renderHostVoteMine(); renderHostVoteTiles(); hostEmit();
+  clearInterval(hvTick); let last=null;
+  hvTick=setInterval(()=>{
+    const left=Math.max(0,Math.ceil((H.vstart+VOTE_SECS*1000-Date.now())/1000));
+    if(left!==last){ last=left; $("#hvTimer").textContent=left; $("#hvTimer").style.color=left<=10?"var(--red)":"var(--ink)"; }
+    if(left<=0) tallyVotes();
+  },250);
+}
+function renderHostVoteMine(){
+  const box=$("#hvMine"); box.innerHTML="";
+  const me=H.meKey&&H.players[H.meKey]; if(!me) return;
+  const v=H.votes[H.meKey]||(H.votes[H.meKey]={t:[],done:false});
+  const draw=()=>{
+    box.innerHTML=`<div class="panel"><h2>${esc(me.emoji)} ${esc(me.name)}'s vote</h2><div id="hvGrid"></div><div id="hvSend"></div></div>`;
+    voteGrid($("#hvGrid"),H.vopts,H.vpick,v.t,()=>draw(),v.done);
+    const sb=$("#hvSend");
+    if(v.done) sb.innerHTML=`<div class="locked"><div class="big">Votes sent! ✅</div></div>`;
+    else { const b=document.createElement("button"); b.className="btn"; b.textContent="Send my votes ✅"; b.disabled=v.t.length!==Math.min(H.vpick,H.vopts.length);
+      b.onclick=()=>{ v.done=true; beep("ding"); draw(); hostCheckVote(); }; sb.appendChild(b); }
+  };
+  draw();
+}
+function renderHostVoteTiles(){
+  const ps=Object.entries(H.players);
+  $("#hvTiles").innerHTML=ps.map(([k,p])=>tileHTML(p,((H.votes[k]&&H.votes[k].done)?"done":"")+(p.live?"":" off"))).join("");
+  const n=ps.filter(([k])=>H.votes[k]&&H.votes[k].done).length;
+  $("#hvStatus").textContent=`${n} of ${ps.filter(([k,p])=>p.live).length} have voted`;
+}
+function hostCheckVote(){
+  if(!H||H.phase!=="vote") return;
+  const need=Object.entries(H.players).filter(([k,p])=>p.live);
+  if(need.length && need.every(([k])=>H.votes[k]&&H.votes[k].done)) tallyVotes();
+  else { renderHostVoteTiles(); hostEmit(); }
+}
+$("#hvNow").onclick=()=>tallyVotes();
+function tallyVotes(){
+  if(!H||H.phase!=="vote") return;
+  clearInterval(hvTick);
+  const counts={}; H.vopts.forEach(k=>counts[k]=0);
+  Object.values(H.votes).forEach(v=>(v.t||[]).forEach(k=>{ if(k in counts) counts[k]++; }));
+  if(!H.vtie) H.firstCounts={...counts};
+  const sorted=shuffle(H.vopts).sort((a,b)=>counts[b]-counts[a]);
+  const need=H.vpick;
+  if(sorted.length<=need) return finishVote(sorted);
+  const boundary=counts[sorted[need-1]];
+  if(boundary===0){ // not enough topics got votes: keep the ones that did, draw the rest by lot
+    const sure=sorted.filter(k=>counts[k]>0); H.vlot = sure.length<need;
+    return finishVote([...sure, ...shuffle(sorted.filter(k=>counts[k]===0)).slice(0,need-sure.length)]);
+  }
+  const sure=sorted.filter(k=>counts[k]>boundary), tied=sorted.filter(k=>counts[k]===boundary), k=need-sure.length;
+  if(tied.length===k) return finishVote([...sure,...tied]);
+  H.won.push(...sure);
+  if(H.tiebreaks>=MAX_TIEBREAKS){ H.vlot=true; return finishVote(shuffle(tied).slice(0,k)); }
+  H.tiebreaks++;
+  beep("ding");
+  voteRound(tied, k, true);
+}
+function finishVote(list){
+  H.cats=[...H.won,...list].slice(0,VOTE_PICK);
+  H.phase="vres"; H.decks={};
+  const fc=H.firstCounts||{};
+  $("#hvrList").innerHTML=H.cats.map(k=>`<div class="vwin"><span class="e">${CATS[k].e}</span><span style="flex:1">${esc(CATS[k].n)}</span><span class="muted" style="font-size:1rem">${fc[k]||0} vote${(fc[k]||0)===1?"":"s"}</span></div>`).join("");
+  $("#hvrSub").textContent = H.vlot ? "Some places were drawn by lot 🎲" : H.tiebreaks ? `Decided after ${H.tiebreaks} tie-break${H.tiebreaks>1?"s":""} 🤝` : "Chosen by the family's votes";
+  show("#s-hvres"); beep("win"); burst(120); hostEmit();
+}
+$("#hvrGo").onclick=()=>{ if(!H) return; H.round=0; hostNextQ(); };
 function hostNextQ(){
   H.round++; H.rid=Date.now()%1e9; H.answers={}; H.phase="q";
   const levels=[...new Set(Object.values(H.players).filter(p=>p.live!==false).map(p=>p.level))];
@@ -664,6 +807,9 @@ function hostEmit(){
     st.qs=qs; st.endsAt=H.cur.endsAt; st.done=Object.keys(H.answers);
   }
   if(H.phase==="rev"){ st.qs=H.cur.qs; st.res=H.res; }
+  if(H.phase==="vote"){ st.vid=H.vid; st.vopts=H.vopts; st.vpick=H.vpick; st.vtie=!!H.vtie; st.won=H.won; st.endsAt=H.vEndsAt;
+    st.done=Object.keys(H.votes).filter(k=>H.votes[k].done); }
+  if(H.phase==="vres"){ st.cats=H.cats; }
   FB.set(FB.r(`games/${H.code}/state`),JSON.parse(JSON.stringify(st))).catch(()=>{});
 }
 
@@ -743,6 +889,18 @@ function playerState(st){
       }
     }
   }
+  else if(st.ph==="vote"){
+    if(P.vid!==st.vid){ P.vid=st.vid; P.picks=[]; P.vdone=false; renderPVote(st); }
+    else P.vEnds=Date.now()+Math.max(0,(+st.endsAt||0)-FB.now());
+  }
+  else if(st.ph==="vres"){
+    if(!prev||prev.ph!=="vres"){ clearInterval(pTimer);
+      const cats=Array.isArray(st.cats)?st.cats:Object.values(st.cats||{});
+      $("#ppBody").innerHTML=`<div class="turnname" style="font-size:2rem;margin:16px 0">🏆 Tonight's topics</div>`+
+        cats.filter(k=>CATS[k]).map(k=>`<div class="vwin"><span class="e">${CATS[k].e}</span><span>${esc(CATS[k].n)}</span></div>`).join("")+
+        `<p class="center muted">Get ready — the quiz starts soon!</p>`;
+      beep("win"); }
+  }
   else if(st.ph==="q"){
     const lvl=(st.lv&&st.lv[P.key])||me.level, q=st.qs&&st.qs[lvl];
     P.deadline=Date.now()+Math.max(0,(+st.endsAt||0)-FB.now());
@@ -759,6 +917,27 @@ function playerState(st){
   else if(st.ph==="fin"){
     if(!prev||prev.ph!=="fin"){ clearInterval(pTimer); renderPFin(st); }
   }
+}
+function renderPVote(st){
+  const opts=(Array.isArray(st.vopts)?st.vopts:Object.values(st.vopts||{})).filter(k=>CATS[k]);
+  const won=(Array.isArray(st.won)?st.won:Object.values(st.won||{})).filter(k=>CATS[k]);
+  const pick=Math.min(+st.vpick||5,opts.length);
+  P.vEnds=Date.now()+Math.max(0,(+st.endsAt||0)-FB.now());
+  const draw=()=>{
+    $("#ppBody").innerHTML=(st.vtie?`<div class="banner"><b>It's a tie! 🤝</b><br>Vote again — pick ${pick}.${won.length?`<br>Already chosen: ${won.map(k=>CATS[k].e+" "+esc(CATS[k].n)).join(", ")}`:""}</div>`
+        :`<div class="turnname" style="font-size:1.8rem;margin-top:6px">🗳️ Pick your ${pick} favourite topics</div>`)+
+      `<div class="progress">⏱ <b id="pvT"></b></div><div id="pvGrid"></div><div class="stack" style="padding-top:6px" id="pvSend"></div>`;
+    voteGrid($("#pvGrid"),opts,pick,P.picks,()=>{ FB.update(FB.r(P.path),{vote:{r:st.vid,t:P.picks.slice(),done:false}}).catch(()=>{}); draw(); },P.vdone);
+    const sb=$("#pvSend");
+    if(P.vdone) sb.innerHTML=`<div class="locked"><div class="big">Votes sent! ✅</div><div class="muted">Waiting for the others…</div></div>`;
+    else { const b=document.createElement("button"); b.className="btn"; b.textContent="Send my votes ✅"; b.disabled=P.picks.length!==pick;
+      b.onclick=()=>{ P.vdone=true; beep("ding"); FB.update(FB.r(P.path),{vote:{r:st.vid,t:P.picks.slice(),done:true}}).catch(()=>{}); draw(); };
+      sb.appendChild(b); }
+  };
+  draw();
+  clearInterval(pTimer);
+  const t=()=>{const el=$("#pvT"); if(!el) return; const left=Math.max(0,Math.ceil((P.vEnds-Date.now())/1000)); el.textContent=left+"s"; el.style.color=left<=10?"var(--red)":"";};
+  t(); pTimer=setInterval(t,250);
 }
 function renderPQ(st,q){
   const c=CATS[q.c]||{e:"❓",n:""};
