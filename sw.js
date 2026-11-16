@@ -1,6 +1,6 @@
 // Keeps the app working offline (Pass & Play) and loads updates when online.
 // When you change any file, bump this number so phones pick up the new version.
-const CACHE = "quiz-night-v2";
+const CACHE = "quiz-night-v3";
 const FILES = ["./", "index.html", "pass.html", "questions.js", "firebase-config.js",
                "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
@@ -16,7 +16,7 @@ self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(e.request, { cache: "no-cache" }).then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy));
       return res;
