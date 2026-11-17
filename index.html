@@ -256,6 +256,15 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
     <p class="hint">Right answers score 10, plus up to 5 bonus points for being fast.</p>
   </div>
   <div class="panel">
+    <h2>🎯 Game mode</h2>
+    <div class="seg" id="hMode"></div>
+    <div id="hFastBox" style="margin-top:12px">
+      <p class="hint" style="margin:0 0 6px">Question level</p>
+      <div class="seg" id="hFastLvl"></div>
+    </div>
+    <p class="hint" id="hModeHint"></p>
+  </div>
+  <div class="panel">
     <h2>🗳️ Topic vote</h2>
     <div class="seg" id="hVote"></div>
     <p class="hint">Everyone picks their favourite topics on their phone, and the ones with the most votes win. Ties are settled with a new vote between the tied topics, again and again (after 3 tie-breaks it's drawn by lot).</p>
@@ -450,7 +459,7 @@ $("#pickHost").onclick=async()=>{
   PEERS=[];
   $("#hCode").textContent=code;
   renderInvite(code);
-  renderHostAuto(); $("#hAutoCount").style.display="none"; renderHostVoteSetting(); renderNotifyBtn();
+  renderHostAuto(); $("#hAutoCount").style.display="none"; renderHostVoteSetting(); renderNotifyBtn(); renderHostMode();
   renderHostSettings(); renderHostMe(); renderHostLobby(); show("#s-hlobby");
   const g=f.r("games/"+code);
   try{
@@ -587,8 +596,8 @@ function hostPeers(){
       const t=(Array.isArray(pr.vote.t)?pr.vote.t:Object.values(pr.vote.t||{})).filter(x=>H.vopts.includes(x)).slice(0,H.vpick);
       H.votes[k]={t,done:!!pr.vote.done};
     }
-    if(H.phase==="q" && pr.ans && pr.ans.r===H.rid && H.answers[k]===undefined && H.cur.qs[pl.level]){
-      const i=pr.ans.i|0; if(i>=0&&i<4){ H.answers[k]={i,t:Date.now()}; beep("ding"); }
+    if(H.phase==="q" && pr.ans && pr.ans.r===H.rid && H.answers[k]===undefined && H.cur.qs[lvlOf(pl)]){
+      const i=pr.ans.i|0; if(i>=0&&i<4){ H.answers[k]={i,t:Date.now(),ts:(typeof pr.ans.ts==="number"?pr.ans.ts:FB.now())}; beep("ding"); }
     }
   });
   Object.entries(H.players).forEach(([k,pl])=>pl.live=live.has(k)||!!pl.local);
@@ -597,7 +606,11 @@ function hostPeers(){
   if(H.phase==="vote") hostCheckVote();
 }
 function hostCheckAll(){
-  const need=Object.entries(H.players).filter(([k,p])=>H.cur.qs[p.level]);
+  const need=Object.entries(H.players).filter(([k,p])=>H.cur.qs[lvlOf(p)]);
+  if(H.cur.fast && !H.cur.closeAt){ // someone got it right: close after a short grace so near-simultaneous answers are compared fairly
+    const q=H.cur.qs[H.cur.lvl];
+    if(Object.values(H.answers).some(a=>a.i===q.k)) H.cur.closeAt=Date.now()+1200;
+  }
   if(need.length && need.every(([k])=>H.answers[k]!==undefined)) hostReveal();
   else { renderHostQ(); hostEmit(); }
 }
@@ -634,6 +647,18 @@ $("#hStart").onclick=()=>{ if(!H) return; beep("tick"); clearInterval(hAutoTick)
   if(hSettings.vote!==false) startVote(); else { H.cats=null; hostNextQ(); } };
 $("#hAgain").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; hostNextQ(); };
 $("#hRevote").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; startVote(); };
+
+/* ======================= GAME MODE ======================= */
+function renderHostMode(){
+  const m=hSettings.mode||"level";
+  seg($("#hMode"),[["level","🎓 Own level — everyone scores"],["fast","⚡ Same question — fastest wins"]],()=>hSettings.mode||"level",v=>{hSettings.mode=v;hSave();renderHostMode()});
+  seg($("#hFastLvl"),[["e","Easy"],["m","Medium"],["h","Hard"],["mix","Mix"]],()=>hSettings.fastLevel||"mix",v=>{hSettings.fastLevel=v;hSave()});
+  $("#hFastBox").style.display = m==="fast" ? "" : "none";
+  $("#hModeHint").textContent = m==="fast"
+    ? "Everyone gets the same question. The first correct answer wins 10 points — a wrong answer locks you out of that question."
+    : "Everyone gets their own question at their own level. Right answers score 10, plus up to 5 bonus points for speed.";
+}
+const lvlOf = p => (H&&H.cur&&H.cur.fast) ? H.cur.lvl : p.level;
 
 /* ======================= TOPIC VOTE ======================= */
 const VOTE_SECS=60, VOTE_PICK=window.QUIZ_PICK||5, MAX_TIEBREAKS=3;
@@ -733,23 +758,36 @@ function finishVote(list){
 $("#hvrGo").onclick=()=>{ if(!H) return; H.round=0; hostNextQ(); };
 function hostNextQ(){
   H.round++; H.rid=Date.now()%1e9; H.answers={}; H.phase="q";
-  const levels=[...new Set(Object.values(H.players).filter(p=>p.live!==false).map(p=>p.level))];
-  if(!levels.length) levels.push("m");
-  const qs={}; levels.forEach(l=>qs[l]=draw(l));
-  H.cur={qs,start:Date.now(),dur:hSettings.timer*1000,endsAt:FB.now()+hSettings.timer*1000};
+  const qs={}; let fast=false, flv=null;
+  if((hSettings.mode||"level")==="fast"){
+    fast=true; const fl=hSettings.fastLevel||"mix";
+    flv = fl==="mix" ? ["e","m","h"][(H.round-1)%3] : fl;
+    qs[flv]=draw(flv);
+  } else {
+    const levels=[...new Set(Object.values(H.players).filter(p=>p.live!==false).map(p=>p.level))];
+    if(!levels.length) levels.push("m");
+    levels.forEach(l=>qs[l]=draw(l));
+  }
+  H.cur={qs,fast,lvl:flv,closeAt:null,start:Date.now(),dur:hSettings.timer*1000,endsAt:FB.now()+hSettings.timer*1000};
   $("#hqRound").textContent=`Question ${H.round} of ${hSettings.rounds}`;
   show("#s-hq"); renderHostMine(); renderHostQ(); hostEmit();
   clearInterval(hTick); let lastS=null;
   hTick=setInterval(()=>{
     const left=Math.max(0,Math.ceil((H.cur.start+H.cur.dur-Date.now())/1000));
     if(left!==lastS){lastS=left;$("#hqTimer").textContent=left;$("#hqTimer").style.color=left<=5?"var(--red)":left<=10?"var(--gold)":"var(--ink)";if(left<=5&&left>0)beep("tick")}
-    if(left<=0) hostReveal();
+    if(left<=0 || (H.cur.closeAt && Date.now()>=H.cur.closeAt)) hostReveal();
   },200);
 }
 function renderHostMine(){
   const box=$("#hqMine"); box.innerHTML="";
-  const me=H.meKey&&H.players[H.meKey]; if(!me) return;
-  const q=H.cur.qs[me.level]; if(!q) return;
+  const me=H.meKey&&H.players[H.meKey];
+  if(!me){ // nobody plays on this screen: in fast mode show the shared question for the room
+    if(!H.cur.fast) return;
+    const q=H.cur.qs[H.cur.lvl], c=CATS[q.c];
+    box.innerHTML=`<div class="qcard"><div class="qcat">⚡ First right answer wins · ${c.e} ${c.n}</div><div class="qtext">${esc(q.t)}</div></div><div class="opts">${q.o.map((a,i)=>`<div class="opt"><span class="k">${"ABCD"[i]}</span><span>${esc(a)}</span></div>`).join("")}</div><div style="height:16px"></div>`;
+    return;
+  }
+  const q=H.cur.qs[lvlOf(me)]; if(!q) return;
   const c=CATS[q.c];
   box.innerHTML=`<div class="qcard"><div class="qcat">${esc(me.emoji)} ${esc(me.name)}'s question · ${c.e} ${c.n}</div><div class="qtext">${esc(q.t)}</div></div><div class="opts" id="hqOpts"></div><div id="hqLock" style="margin-bottom:16px"></div>`;
   const o=$("#hqOpts");
@@ -758,7 +796,7 @@ function renderHostMine(){
     b.innerHTML=`<span class="k">${"ABCD"[i]}</span><span>${esc(a)}</span>`;
     b.onclick=()=>{
       if(H.phase!=="q"||H.answers[H.meKey]!==undefined) return;
-      H.answers[H.meKey]={i,t:Date.now()}; beep("ding");
+      H.answers[H.meKey]={i,t:Date.now(),ts:FB.now()}; beep("ding");
       o.querySelectorAll(".opt").forEach((x,j)=>{x.disabled=true;if(j!==i)x.classList.add("dim");else x.style.borderColor="var(--teal)"});
       $("#hqLock").innerHTML=`<div class="locked"><div class="big">Locked in! 🔒</div></div>`;
       hostCheckAll();
@@ -770,12 +808,27 @@ function renderHostQ(){
   const ps=Object.entries(H.players);
   $("#hqTiles").innerHTML=ps.map(([k,p])=>tileHTML(p,(H.answers[k]!==undefined?"done":"")+(p.live?"":" off"))).join("");
   const n=ps.filter(([k])=>H.answers[k]!==undefined).length;
-  $("#hqStatus").textContent=`${n} of ${ps.filter(([k,p])=>H.cur.qs[p.level]).length} answered`;
+  $("#hqStatus").textContent=`${n} of ${ps.filter(([k,p])=>H.cur.qs[lvlOf(p)]).length} answered`;
 }
 $("#hSkip").onclick=()=>hostReveal();
 function hostReveal(){
   if(!H||H.phase!=="q") return;
   clearInterval(hTick); H.phase="rev"; H.res={};
+  if(H.cur.fast){
+    const q=H.cur.qs[H.cur.lvl];
+    const right=Object.entries(H.answers).filter(([k,a])=>a.i===q.k).sort((a,b)=>a[1].ts-b[1].ts);
+    const win=right.length?right[0][0]:null; H.cur.winner=win;
+    Object.entries(H.players).forEach(([k,p])=>{
+      const a=H.answers[k];
+      if(!a){H.res[k]={i:-1,ok:false,pts:0,first:false};return}
+      const ok=a.i===q.k, first=k===win, pts=first?10:0;
+      if(first){p.score+=pts;p.right++}
+      H.res[k]={i:a.i,ok,pts,first};
+    });
+    renderHostRev(); hostEmit();
+    beep(win?"ok":"no"); if(win)burst(80);
+    return;
+  }
   Object.entries(H.players).forEach(([k,p])=>{
     const q=H.cur.qs[p.level]; if(!q) return;
     const a=H.answers[k];
@@ -799,9 +852,12 @@ function renderHostRev(){
   $("#hrRound").textContent=`Question ${H.round} of ${hSettings.rounds}`;
   $("#hrGroups").innerHTML=["e","m","h"].filter(l=>H.cur.qs[l]).map(l=>{
     const q=H.cur.qs[l];
-    const rows=Object.entries(H.players).filter(([k,p])=>p.level===l&&H.res[k]).map(([k,p])=>{
+    const rows=Object.entries(H.players).filter(([k,p])=>lvlOf(p)===l&&H.res[k]).map(([k,p])=>{
       const r=H.res[k];
-      return `<div class="res"><span class="f">${esc(p.emoji)}</span><span class="n">${esc(p.name)}<br><small class="muted">${r.i<0?"no answer":esc(q.o[r.i])}</small></span>${r.ok?`<span class="ok">✓ +${r.pts}</span>`:`<span class="no">✗</span>`}</div>`;
+      const badge = H.cur.fast
+        ? (r.first?`<span class="ok">⚡ First! +${r.pts}</span>`:r.ok?`<span class="muted">✓ too slow</span>`:`<span class="no">✗</span>`)
+        : (r.ok?`<span class="ok">✓ +${r.pts}</span>`:`<span class="no">✗</span>`);
+      return `<div class="res"><span class="f">${esc(p.emoji)}</span><span class="n">${esc(p.name)}<br><small class="muted">${r.i<0?"no answer":esc(q.o[r.i])}</small></span>${badge}</div>`;
     }).join("");
     return `<div class="revgroup"><div class="qcat">${CATS[q.c].e} ${CATS[q.c].n} <span class="tag">${LVL[l]}</span></div>
       <div class="rq">${esc(q.t)}</div><div class="ra">✔ ${esc(q.o[q.k])}</div>${rows}</div>`;
@@ -827,7 +883,8 @@ function hostEmit(){
   const st={ph:H.phase,code:H.code,round:H.round,total:hSettings.rounds,sc};
   if(H.phase==="lobby"){ st.pl=Object.keys(H.players); if(H.startAt) st.startAt=H.startAt; }
   if(H.phase==="q"||H.phase==="rev"){
-    st.rid=H.rid; st.lv={}; Object.entries(H.players).forEach(([k,p])=>st.lv[k]=p.level);
+    st.rid=H.rid; st.lv={}; Object.entries(H.players).forEach(([k,p])=>st.lv[k]=lvlOf(p));
+    if(H.cur.fast){ st.fast=true; st.flv=H.cur.lvl; if(H.phase==="rev"&&H.cur.winner) st.win=H.cur.winner; }
   }
   if(H.phase==="q"){
     const qs={}; Object.entries(H.cur.qs).forEach(([l,q])=>qs[l]={c:q.c,t:q.t,o:q.o});
@@ -938,7 +995,7 @@ function playerState(st){
       beep("win"); }
   }
   else if(st.ph==="q"){
-    const lvl=(st.lv&&st.lv[P.key])||me.level, q=st.qs&&st.qs[lvl];
+    const lvl=st.flv||(st.lv&&st.lv[P.key])||me.level, q=st.qs&&st.qs[lvl];
     P.deadline=Date.now()+Math.max(0,(+st.endsAt||0)-FB.now());
     if(P.rid!==st.rid){
       P.rid=st.rid; P.picked=null;
@@ -977,7 +1034,7 @@ function renderPVote(st){
 }
 function renderPQ(st,q){
   const c=CATS[q.c]||{e:"❓",n:""};
-  $("#ppBody").innerHTML=`<div class="progress">Question ${st.round} of ${st.total} · <b id="ppT"></b></div>
+  $("#ppBody").innerHTML=(st.fast?`<div class="banner" style="padding:8px">⚡ <b>Same question for everyone</b> — first right answer wins!</div>`:"")+`<div class="progress">Question ${st.round} of ${st.total} · <b id="ppT"></b></div>
     <div class="qcard"><div class="qcat">${c.e} ${esc(c.n)}</div><div class="qtext">${esc(q.t)}</div></div>
     <div class="opts" id="ppOpts"></div><div id="ppLock"></div>`;
   const o=$("#ppOpts");
@@ -987,7 +1044,7 @@ function renderPQ(st,q){
     b.onclick=()=>{
       if(P.picked!==null) return;
       P.picked=i; beep("tick");
-      FB.update(FB.r(P.path),{ans:{r:st.rid,i}}).catch(()=>{});
+      FB.update(FB.r(P.path),{ans:{r:st.rid,i,ts:FB.serverTimestamp()}}).catch(()=>{});
       o.querySelectorAll(".opt").forEach((x,j)=>{x.disabled=true;if(j!==i)x.classList.add("dim");else x.style.borderColor="var(--teal)"});
       $("#ppLock").innerHTML=`<div class="locked"><div class="big">Locked in! 🔒</div><div class="muted">Waiting for the others…</div></div>`;
     };
@@ -999,12 +1056,23 @@ function renderPQ(st,q){
   tick(); pTimer=setInterval(tick,250);
 }
 function renderPRev(st){
-  const r=st.res&&st.res[P.key]; const lvl=(st.lv&&st.lv[P.key])||me.level; const q=st.qs&&st.qs[lvl];
+  const r=st.res&&st.res[P.key]; const lvl=st.flv||(st.lv&&st.lv[P.key])||me.level; const q=st.qs&&st.qs[lvl];
   const sc=myScore(st);
   if(!r||!q){ pWait("Answers are up on the big screen 📺", sc?`You're #${sc.rank} of ${sc.of}`:""); return; }
   const correct=(q.o||[])[q.k];
-  $("#ppBody").innerHTML=`<div class="result ${r.ok?"ok":"no"}">${r.ok?"Correct! 🎉":r.i<0?"Too slow! 🐢":"Not this time 🙈"}</div>
-    <p class="center" style="font-size:1.3rem">${r.ok?`+${r.pts} points`:`The answer was <b style="color:var(--green)">${esc(correct)}</b>`}</p>
+  let head, sub;
+  if(st.fast){
+    const w=(st.sc||[]).find(x=>x.k===st.win);
+    if(r.first){ head="⚡ First! 🎉"; sub=`+${r.pts} points`; }
+    else if(r.ok){ head="Right — but too slow 🐢"; sub=w?`${esc(w.e)} ${esc(w.n)} was faster`:""; }
+    else { head = r.i<0?"No answer ⏰":"Not this time 🙈"; sub=`The answer was <b style="color:var(--green)">${esc(correct)}</b>`+(w?` · ${esc(w.e)} ${esc(w.n)} got it first`:""); }
+    r.ok = !!r.first;
+  } else {
+    head = r.ok?"Correct! 🎉":r.i<0?"Too slow! 🐢":"Not this time 🙈";
+    sub = r.ok?`+${r.pts} points`:`The answer was <b style="color:var(--green)">${esc(correct)}</b>`;
+  }
+  $("#ppBody").innerHTML=`<div class="result ${r.ok?"ok":"no"}">${head}</div>
+    <p class="center" style="font-size:1.3rem">${sub}</p>
     ${sc?`<div class="panel center" style="margin-top:20px"><div class="muted">You're in</div><div style="font-size:3rem;font-weight:700">${sc.rank===1?"🥇":sc.rank===2?"🥈":sc.rank===3?"🥉":"#"+sc.rank}</div><div class="muted">${sc.s} points</div></div>`:""}
     <p class="center muted">Look at the big screen! 📺</p>`;
   if(r.ok){beep("ok");burst(60)}else beep("no");
