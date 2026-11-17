@@ -175,6 +175,8 @@ canvas#confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 .rolecards{grid-template-columns:1fr}
 @media (min-width:640px){.rolecards{grid-template-columns:1fr 1fr 1fr}}
 a.rolecard{color:inherit;text-decoration:none;display:block}
+#s-pjoin.quick .opt-hide{display:none}
+#s-pjoin:not(.quick) .quick-only{display:none}
 .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:60;background:var(--card2);border:2px solid var(--green);border-radius:999px;padding:12px 22px;font-size:1.2rem;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:pop .3s ease;transition:opacity .5s,transform .5s}
 .toast.out{opacity:0;transform:translateX(-50%) translateY(-20px)}
 .vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:12px 0}
@@ -256,7 +258,7 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
   <div class="panel">
     <h2>🗳️ Topic vote</h2>
     <div class="seg" id="hVote"></div>
-    <p class="hint">Everyone picks 5 of the 30 topics on their phone, and the 5 with the most votes win. Ties are settled with a new vote between the tied topics, again and again (after 3 tie-breaks it's drawn by lot).</p>
+    <p class="hint">Everyone picks their favourite topics on their phone, and the ones with the most votes win. Ties are settled with a new vote between the tied topics, again and again (after 3 tie-breaks it's drawn by lot).</p>
   </div>
   <div class="panel" id="hCatsPanel"><h2>🗂️ Categories</h2><div class="seg" id="hCats"></div></div>
   <div class="panel">
@@ -322,18 +324,21 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
 <!-- PLAYER: JOIN -->
 <section class="screen" id="s-pjoin">
   <div class="topbar"><button class="iconbtn" data-home>←</button><span class="tag">Player</span></div>
-  <div class="panel">
+  <div class="panel opt-hide">
     <h2>🔑 Game code</h2>
     <input class="codein" id="pCode" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="ABCD">
   </div>
   <div class="panel">
     <h2>🙋 You</h2>
-    <input class="namein" id="pName" maxlength="14" placeholder="Your name">
+    <input class="namein" id="pName" maxlength="14" placeholder="Your name" enterkeyhint="go">
+    <p class="quick-only center" style="margin-top:14px"><a href="#" id="pMore" style="color:var(--teal)">Choose face &amp; level (optional)</a></p>
+    <div class="opt-hide">
     <p class="hint" style="margin:14px 0 6px">Pick your face</p>
     <div class="emojigrid" id="pEmojis"></div>
     <p class="hint" style="margin:14px 0 6px">Your level</p>
     <div class="seg" id="pLevel"></div>
     <p class="hint">Easy ≈ younger kids, Medium ≈ teens, Hard ≈ grown-ups. Everyone gets their own question at their level.</p>
+    </div>
   </div>
   <div class="stack"><button class="btn" id="pJoin">Join 🎉</button></div>
   <p class="center muted" id="pJoinMsg" style="margin-top:10px"></p>
@@ -362,9 +367,10 @@ const shuffle = a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.random()
 const esc = s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const clean = (s,n)=>String(s??"").replace(/[\u0000-\u001f]/g,"").trim().slice(0,n);
 const keyOf = n=>clean(n,14).toLowerCase().replace(/[.#$\[\]\/]/g,"_") || "player";
+const QID = window.QUIZ_ID ? "_"+window.QUIZ_ID : "";
 const store = {
-  get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
-  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+  get(k,d){if(k!=="fqm_me"&&k!=="fqm_device")k+=QID;try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
+  set(k,v){if(k!=="fqm_me"&&k!=="fqm_device")k+=QID;try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 };
 function show(id){document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));$(id).classList.add("active");window.scrollTo(0,0)}
 function seg(el,opts,get,set){
@@ -456,7 +462,7 @@ $("#pickHost").onclick=async()=>{
   }));
 };
 /* ---------- invite: QR code + share link ---------- */
-function inviteLink(code){ return location.origin+location.pathname.replace(/[^/]*$/,"")+"?join="+code; }
+function inviteLink(code){ return location.origin+location.pathname+"?join="+code; }
 let qrLib=null;
 function loadQrLib(){
   if(qrLib) return qrLib;
@@ -630,7 +636,7 @@ $("#hAgain").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p
 $("#hRevote").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; startVote(); };
 
 /* ======================= TOPIC VOTE ======================= */
-const VOTE_SECS=60, VOTE_PICK=5, MAX_TIEBREAKS=3;
+const VOTE_SECS=60, VOTE_PICK=window.QUIZ_PICK||5, MAX_TIEBREAKS=3;
 let hvTick=null;
 function renderHostVoteSetting(){
   seg($("#hVote"),[[true,"On — everyone votes"],[false,"Off — I pick"]],()=>hSettings.vote!==false,v=>{hSettings.vote=v;hSave();renderHostVoteSetting()});
@@ -841,6 +847,7 @@ let P=null, pTimer=null;
 $("#pickPlayer").onclick=()=>{
   beep("tick");
   if(!configured){ $("#noFb").style.display=""; $("#noFb").scrollIntoView({behavior:"smooth"}); return; }
+  $("#s-pjoin").classList.remove("quick");
   $("#pCode").value=me.code||""; $("#pName").value=me.name||"";
   renderPEmojis(); seg($("#pLevel"),[["e","Easy"],["m","Medium"],["h","Hard"]],()=>me.level,v=>me.level=v);
   $("#pJoinMsg").textContent=""; show("#s-pjoin");
@@ -855,8 +862,14 @@ $("#pickPlayer").onclick=()=>{
   $("#pCode").value=me.code;
   // been here before? join straight away — one tap on the invite, nothing else
   if(me.name){ $("#pName").value=me.name; $("#pJoinMsg").textContent=`Joining as ${me.name}…`; setTimeout(()=>$("#pJoin").click(),150); }
-  else setTimeout(()=>$("#pName").focus(),300);
+  else { // first time from an invite: just a name and one button
+    $("#s-pjoin").classList.add("quick");
+    if(me.emoji==="🦊") me.emoji=EMOJIS[Math.random()*18|0];
+    setTimeout(()=>$("#pName").focus(),300);
+  }
 })();
+$("#pMore").onclick=e=>{ e.preventDefault(); $("#s-pjoin").classList.remove("quick"); renderPEmojis(); };
+$("#pName").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#pJoin").click(); });
 function renderPEmojis(){
   const g=$("#pEmojis"); g.innerHTML="";
   EMOJIS.forEach(e=>{const b=document.createElement("button");b.textContent=e;if(e===me.emoji)b.style.outline="3px solid var(--teal)";b.onclick=()=>{me.emoji=e;renderPEmojis()};g.appendChild(b)});
