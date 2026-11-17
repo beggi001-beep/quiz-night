@@ -153,7 +153,7 @@ h:[
 ]};
 /* ---------- EXTRA QUESTIONS (pack 2) ---------- */
 Object.assign(CATS,{
-  space:{n:"Space",e:"🚀"}, body:{n:"Human Body",e:"🫀"}, tech:{n:"Tech & Inventions",e:"💻"},
+  space:{n:"Space",e:"🚀"}, body:{n:"Human Body",e:"🧠"}, tech:{n:"Tech & Inventions",e:"💻"},
   words:{n:"Words & Language",e:"🔤"}, movies:{n:"Movies & TV",e:"🎬"}, art:{n:"Art",e:"🎨"}
 });
 BANK.e.push(

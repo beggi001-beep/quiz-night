@@ -175,6 +175,8 @@ canvas#confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 .rolecards{grid-template-columns:1fr}
 @media (min-width:640px){.rolecards{grid-template-columns:1fr 1fr 1fr}}
 a.rolecard{color:inherit;text-decoration:none;display:block}
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:60;background:var(--card2);border:2px solid var(--green);border-radius:999px;padding:12px 22px;font-size:1.2rem;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:pop .3s ease;transition:opacity .5s,transform .5s}
+.toast.out{opacity:0;transform:translateX(-50%) translateY(-20px)}
 .vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:12px 0}
 .vchip{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:10px 8px;font-size:1rem;font-weight:500;text-align:left;display:flex;gap:6px;align-items:center;transition:all .15s}
 .vchip.on{border-color:var(--green);background:rgba(62,224,143,.18)}
@@ -233,6 +235,7 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
   <div class="panel" style="margin-top:14px">
     <h2>👨‍👩‍👧‍👦 Players <span class="muted" id="hCount"></span></h2>
     <div class="tiles" id="hLobbyTiles"></div>
+    <button class="btn small ghost" id="hNotify" style="margin-top:12px;display:none">🔔 Notify me on this computer when someone joins</button>
     <p class="hint" id="hLobbyHint">Waiting for players… Open the app on each phone, tap <b>Join a game</b> and type the code.</p>
   </div>
   <div class="panel">
@@ -442,7 +445,7 @@ $("#pickHost").onclick=async()=>{
   PEERS=[];
   $("#hCode").textContent=code;
   renderInvite(code);
-  renderHostAuto(); $("#hAutoCount").style.display="none"; renderHostVoteSetting();
+  renderHostAuto(); $("#hAutoCount").style.display="none"; renderHostVoteSetting(); renderNotifyBtn();
   renderHostSettings(); renderHostMe(); renderHostLobby(); show("#s-hlobby");
   const g=f.r("games/"+code);
   try{
@@ -513,6 +516,23 @@ $("#hShare").onclick=async()=>{
   try{ await navigator.clipboard.writeText(text); $("#hShareMsg").textContent="Invite copied — paste it into Messenger or a text message."; }
   catch(e){ $("#hShareMsg").textContent=text; }
 };
+/* ---------- "someone joined" notice for the host ---------- */
+function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.body.appendChild(t);
+  setTimeout(()=>t.classList.add("out"),3000); setTimeout(()=>t.remove(),3600); }
+let titleFlash=null;
+function notifyJoin(p){
+  beep("win"); toast(`${p.emoji} ${p.name} joined!`);
+  try{ if("Notification" in window && Notification.permission==="granted" && document.hidden)
+    new Notification("Family Quiz Night",{body:`${p.emoji} ${p.name} joined the game`,icon:"icon-192.png",tag:"join-"+p.name}); }catch(e){}
+  if(document.hidden){ clearInterval(titleFlash); let on=false;
+    titleFlash=setInterval(()=>{ document.title=(on=!on)?`🎉 ${p.name} joined!`:"Family Quiz Night"; },1000); }
+}
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ clearInterval(titleFlash); document.title="Family Quiz Night"; } });
+function renderNotifyBtn(){
+  const b=$("#hNotify"); const ok="Notification" in window;
+  b.style.display = ok && Notification.permission==="default" ? "" : "none";
+}
+$("#hNotify").onclick=async()=>{ try{ await Notification.requestPermission(); }catch(e){} renderNotifyBtn(); };
 function alertBox(msg){ $("#noFb").innerHTML=esc(msg); $("#noFb").style.display=""; }
 function stopHost(){clearInterval(hTick);clearInterval(hvTick);H=null}
 
@@ -551,12 +571,13 @@ function hostPeers(){
     if(!pr.online) return;
     const name=clean(pr.name,14); if(!name) return;
     const k=keyOf(name); live.add(k);
-    let pl=H.players[k];
+    let pl=H.players[k]; const isNew=!pl;
     if(!pl){ pl=H.players[k]={name,emoji:"🙂",level:"m",score:0,right:0,color:COLORS[Object.keys(H.players).length%COLORS.length]}; }
     if(pl.local) return;
     pl.emoji = EMOJIS.includes(pr.emoji)?pr.emoji:pl.emoji;
     if(H.phase==="lobby"||H.phase==="fin") pl.level = LVL[pr.level]?pr.level:"m";
     pl.name=name;
+    if(isNew) notifyJoin(pl);
     if(H.phase==="vote" && pr.vote && pr.vote.r===H.vid){
       const t=(Array.isArray(pr.vote.t)?pr.vote.t:Object.values(pr.vote.t||{})).filter(x=>H.vopts.includes(x)).slice(0,H.vpick);
       H.votes[k]={t,done:!!pr.vote.done};
@@ -571,7 +592,7 @@ function hostPeers(){
   if(H.phase==="vote") hostCheckVote();
 }
 function hostCheckAll(){
-  const need=Object.entries(H.players).filter(([k,p])=>p.live&&H.cur.qs[p.level]);
+  const need=Object.entries(H.players).filter(([k,p])=>H.cur.qs[p.level]);
   if(need.length && need.every(([k])=>H.answers[k]!==undefined)) hostReveal();
   else { renderHostQ(); hostEmit(); }
 }
@@ -664,11 +685,12 @@ function renderHostVoteTiles(){
   const ps=Object.entries(H.players);
   $("#hvTiles").innerHTML=ps.map(([k,p])=>tileHTML(p,((H.votes[k]&&H.votes[k].done)?"done":"")+(p.live?"":" off"))).join("");
   const n=ps.filter(([k])=>H.votes[k]&&H.votes[k].done).length;
-  $("#hvStatus").textContent=`${n} of ${ps.filter(([k,p])=>p.live).length} have voted`;
+  $("#hvStatus").textContent=`${n} of ${ps.length} have voted`;
 }
 function hostCheckVote(){
   if(!H||H.phase!=="vote") return;
-  const need=Object.entries(H.players).filter(([k,p])=>p.live);
+  // wait for everyone who joined — a phone that briefly drops (e.g. the camera was opened) still counts
+  const need=Object.entries(H.players);
   if(need.length && need.every(([k])=>H.votes[k]&&H.votes[k].done)) tallyVotes();
   else { renderHostVoteTiles(); hostEmit(); }
 }
@@ -743,7 +765,7 @@ function renderHostQ(){
   const ps=Object.entries(H.players);
   $("#hqTiles").innerHTML=ps.map(([k,p])=>tileHTML(p,(H.answers[k]!==undefined?"done":"")+(p.live?"":" off"))).join("");
   const n=ps.filter(([k])=>H.answers[k]!==undefined).length;
-  $("#hqStatus").textContent=`${n} of ${ps.filter(([k,p])=>p.live).length} answered`;
+  $("#hqStatus").textContent=`${n} of ${ps.filter(([k,p])=>H.cur.qs[p.level]).length} answered`;
 }
 $("#hSkip").onclick=()=>hostReveal();
 function hostReveal(){
@@ -832,7 +854,9 @@ $("#pickPlayer").onclick=()=>{
   me.code=m.toUpperCase();
   $("#pickPlayer").click();
   $("#pCode").value=me.code;
-  setTimeout(()=>{ if(!me.name) $("#pName").focus(); },300);
+  // been here before? join straight away — one tap on the invite, nothing else
+  if(me.name){ $("#pName").value=me.name; $("#pJoinMsg").textContent=`Joining as ${me.name}…`; setTimeout(()=>$("#pJoin").click(),150); }
+  else setTimeout(()=>$("#pName").focus(),300);
 })();
 function renderPEmojis(){
   const g=$("#pEmojis"); g.innerHTML="";
