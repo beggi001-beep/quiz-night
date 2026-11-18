@@ -1,6 +1,6 @@
 // Keeps the app working offline (Pass & Play) and loads updates when online.
 // When you change any file, bump this number so phones pick up the new version.
-const CACHE = "quiz-night-v11";
+const CACHE = "quiz-night-v12";
 const FILES = ["./", "index.html", "pass.html", "questions.js", "firebase-config.js",
                "manifest.webmanifest", "work.html", "questions-work.js", "manifest-work.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
