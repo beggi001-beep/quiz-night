@@ -198,6 +198,8 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
 <body>
 <div class="aurora"><i></i><i></i><i></i></div>
 <canvas id="confetti"></canvas>
+<button id="musicBtn" class="iconbtn" style="position:fixed;bottom:14px;right:14px;z-index:35;display:none" title="Music on/off">🎵</button>
+<button id="voiceBtn" class="iconbtn" style="position:fixed;bottom:14px;right:66px;z-index:35;display:none" title="Announcer voice on/off">🗣️</button>
 <div class="conn" id="conn" style="display:none">connecting…</div>
 
 <div class="wrap">
@@ -400,6 +402,53 @@ function beep(type){try{ac=ac||new(window.AudioContext||window.webkitAudioContex
     g.gain.setValueAtTime(.0001,ac.currentTime+t);g.gain.exponentialRampToValueAtTime(type==="tick"?.05:.16,ac.currentTime+t+.02);
     g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+t+(type==="tick"?.08:.25));o.connect(g).connect(ac.destination);o.start(ac.currentTime+t);o.stop(ac.currentTime+t+.3)});
 }catch(e){}}
+
+/* ======================= SOUND: music, spin, fanfares, announcer ======================= */
+function ctx(){ try{ ac=ac||new(window.AudioContext||window.webkitAudioContext)(); if(ac.state==="suspended") ac.resume(); return ac; }catch(e){ return null; } }
+function tone(type,freq,t,dur,vol,dest){ const a=ctx(); if(!a) return; const o=a.createOscillator(), g=a.createGain();
+  o.type=type; o.frequency.value=freq; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.connect(g).connect(dest||a.destination); o.start(t); o.stop(t+dur+0.05); }
+const midi=m=>440*Math.pow(2,(m-69)/12);
+/* ticking wheel that slows down, ~3.2 s */
+function spinSound(){ const a=ctx(); if(!a) return; let t=a.currentTime+0.05, gap=0.035;
+  while(t < a.currentTime+3.25){ tone("triangle",1400,t,0.035,0.14); tone("square",700,t,0.02,0.03); t+=gap; gap*=1.075; } }
+/* celebration jingles */
+function fanfare(big){ const a=ctx(); if(!a) return; const t=a.currentTime+0.02;
+  const notes = big ? [[72,0],[76,.12],[79,.24],[84,.36],[79,.52],[84,.64]] : [[72,0],[76,.09],[79,.18],[84,.27]];
+  notes.forEach(([m,d])=>{ tone("square",midi(m),t+d,0.18,0.07); tone("triangle",midi(m),t+d,0.22,0.12); });
+  const end = big ? .8 : .4; [60,64,67,72].forEach(m=>tone("triangle",midi(m),t+end,big?1.1:0.6,0.08));
+  if(big) [84,88,91].forEach((m,i)=>tone("sine",midi(m),t+end+0.05*i,0.9,0.05)); }
+/* little looping game tune (host screen only) */
+const Music={ on:store.get("fq_music",true), base:0.045, playing:false, timer:null, next:0, step:0, gain:null, noise:null,
+  start(){ if(!this.on||this.playing) return; const a=ctx(); if(!a) return;
+    this.gain=a.createGain(); this.gain.gain.value=this.base; this.gain.connect(a.destination);
+    if(!this.noise){ const b=a.createBuffer(1,a.sampleRate*0.05,a.sampleRate), d=b.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; this.noise=b; }
+    this.playing=true; this.next=a.currentTime+0.1; this.step=0; this.timer=setInterval(()=>this.tick(),40); },
+  stop(){ this.playing=false; clearInterval(this.timer); if(this.gain&&ac){ const g=this.gain; try{ g.gain.setTargetAtTime(0.0001,ac.currentTime,0.15); }catch(e){} setTimeout(()=>{try{g.disconnect()}catch(e){}},900); } this.gain=null; },
+  duck(v){ if(this.gain&&ac) try{ this.gain.gain.setTargetAtTime(v,ac.currentTime,0.25); }catch(e){} },
+  tick(){ const e=60/128/2; while(this.next < ac.currentTime+0.3){ this.play(this.step,this.next); this.next+=e; this.step=(this.step+1)%64; } },
+  play(s,t){ const bar=Math.floor(s/8)%4, b=s%8, G=this.gain; if(!G) return;
+    const chords=[[48,52,55],[45,48,52],[41,45,48],[43,47,50]], ch=chords[bar];
+    if(b%2===0) tone("triangle",midi(ch[0]-12),t,0.24,0.9,G);
+    if(b%2===1) ch.forEach(m=>tone("square",midi(m+12),t,0.07,0.1,G));
+    const mel=[72,0,76,0,79,0,76,0, 76,0,72,0,69,0,72,74, 72,0,69,0,65,0,69,72, 74,0,71,0,67,0,71,74,
+               79,0,76,0,72,0,76,79, 81,0,79,0,76,0,72,76, 77,0,76,0,72,0,69,72, 74,0,79,0,74,0,71,0];
+    if(mel[s]) tone("square",midi(mel[s]),t,0.16,0.16,G);
+    if(this.noise){ const src=ac.createBufferSource(), hg=ac.createGain(), hp=ac.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=7000;
+      src.buffer=this.noise; hg.gain.setValueAtTime(b%2?0.25:0.12,t); hg.gain.exponentialRampToValueAtTime(0.0001,t+0.04); src.connect(hp).connect(hg).connect(G); src.start(t); } } };
+/* excited announcer (host screen only) */
+const Voice={ on:store.get("fq_voice",true), v:null,
+  pick(){ if(this.v) return this.v; const vs=("speechSynthesis" in window)?speechSynthesis.getVoices():[];
+    this.v=vs.find(v=>/^en-GB/i.test(v.lang)&&/natural|online|google/i.test(v.name))||vs.find(v=>/^en-(GB|US)/i.test(v.lang)&&/natural|online|google/i.test(v.name))||vs.find(v=>/^en-GB/i.test(v.lang))||vs.find(v=>/^en/i.test(v.lang))||null; return this.v; },
+  say(text){ if(!this.on||!("speechSynthesis" in window)) return;
+    try{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text), v=this.pick(); if(v){u.voice=v;u.lang=v.lang} else u.lang="en-GB";
+      u.rate=1.08; u.pitch=1.3; u.volume=1; Music.duck(0.012); u.onend=u.onerror=()=>Music.duck(Music.base); speechSynthesis.speak(u); }catch(e){} } };
+if("speechSynthesis" in window) speechSynthesis.onvoiceschanged=()=>{ Voice.v=null; };
+const pickOne=a=>a[Math.random()*a.length|0];
+const joinNames=n=>n.length<=1?(n[0]||""):n.length===2?`${n[0]} and ${n[1]}`:`${n.slice(0,-1).join(", ")} and ${n[n.length-1]}`;
+function renderSoundBtns(show){ const m=$("#musicBtn"), v=$("#voiceBtn"); if(!m) return;
+  m.style.display=v.style.display=show?"":"none"; m.textContent=Music.on?"🎵":"🔇"; v.textContent=Voice.on?"🗣️":"🤐"; }
+
 const cv=$("#confetti"),cx=cv.getContext("2d");let bits=[],raf=null;
 function size(){cv.width=innerWidth;cv.height=innerHeight}size();addEventListener("resize",size);
 function burst(n){const cols=["#3dd6d0","#ffd166","#9b7bff","#ff8fb1","#3ee08f"];
@@ -432,7 +481,10 @@ async function fb(){
 let unsubs=[];
 function clearSubs(){unsubs.forEach(u=>{try{u()}catch(e){}});unsubs=[]}
 document.querySelectorAll("[data-home]").forEach(b=>b.onclick=goHome);
+$("#musicBtn").onclick=()=>{ Music.on=!Music.on; store.set("fq_music",Music.on); if(Music.on) Music.start(); else Music.stop(); renderSoundBtns(true); };
+$("#voiceBtn").onclick=()=>{ Voice.on=!Voice.on; store.set("fq_voice",Voice.on); if(!Voice.on) try{speechSynthesis.cancel()}catch(e){} else Voice.say("Hello quiz fans!"); renderSoundBtns(true); };
 async function goHome(){
+  Music.stop(); renderSoundBtns(false); try{speechSynthesis.cancel()}catch(e){}
   const h=H, p=P;
   stopHost(); stopPlayer(); clearSubs();
   try{ if(h&&FB) await FB.remove(FB.r("games/"+h.code)); }catch(e){}
@@ -459,7 +511,7 @@ $("#pickHost").onclick=async()=>{
   $("#hCode").textContent=code;
   renderInvite(code);
   renderHostAuto(); $("#hAutoCount").style.display="none"; renderHostVoteSetting(); renderNotifyBtn(); renderHostMode();
-  renderHostSettings(); renderHostMe(); renderHostLobby(); show("#s-hlobby");
+  renderHostSettings(); renderHostMe(); renderHostLobby(); show("#s-hlobby"); renderSoundBtns(true); Music.start();
   const g=f.r("games/"+code);
   try{
     await f.set(g,{created:f.serverTimestamp(),state:{ph:"lobby",code}});
@@ -643,6 +695,7 @@ function draw(level){
 }
 $("#hStart").onclick=()=>{ if(!H) return; beep("tick"); clearInterval(hAutoTick); H.autoMin=0; H.startAt=null; $("#hAutoCount").style.display="none";
   Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={};
+  Voice.say("Let the games begin!"); Music.start();
   if(hSettings.vote!==false) startVote(); else { H.cats=null; hostNextQ(); } };
 $("#hAgain").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; hostNextQ(); };
 $("#hRevote").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; startVote(); };
@@ -752,7 +805,7 @@ function finishVote(list){
   const fc=H.firstCounts||{};
   $("#hvrList").innerHTML=H.cats.map(k=>`<div class="vwin"><span class="e">${CATS[k].e}</span><span style="flex:1">${esc(CATS[k].n)}</span><span class="muted" style="font-size:1rem">${fc[k]||0} vote${(fc[k]||0)===1?"":"s"}</span></div>`).join("");
   $("#hvrSub").textContent = H.vlot ? "Some places were drawn by lot 🎲" : H.tiebreaks ? `Decided after ${H.tiebreaks} tie-break${H.tiebreaks>1?"s":""} 🤝` : "Chosen by everyone's votes";
-  show("#s-hvres"); beep("win"); burst(120); hostEmit();
+  show("#s-hvres"); fanfare(false); burst(120); hostEmit(); Voice.say("The votes are in! Here are today's topics.");
 }
 $("#hvrGo").onclick=()=>{ if(!H) return; H.round=0; hostNextQ(); };
 function hostNextQ(){
@@ -768,6 +821,8 @@ function hostNextQ(){
     levels.forEach(l=>qs[l]=draw(l));
   }
   H.cur={qs,fast,lvl:flv,closeAt:null,start:Date.now(),dur:hSettings.timer*1000,endsAt:FB.now()+hSettings.timer*1000};
+  if(!(typeof isWedge==="function"&&isWedge()) && H.round>1) Voice.say(pickOne(["Let the games continue!","Here comes the next question!","Eyes on your phones!","Ready? Go!","Next question!"]));
+  if(H.round===1 && fast) setTimeout(()=>Voice.say("Same question for everyone. Fastest finger wins!"),1400);
   $("#hqRound").textContent=`Question ${H.round} of ${hSettings.rounds}`;
   show("#s-hq"); renderHostMine(); renderHostQ(); hostEmit();
   clearInterval(hTick); let lastS=null;
@@ -825,7 +880,7 @@ function hostReveal(){
       H.res[k]={i:a.i,ok,pts,first};
     });
     renderHostRev(); hostEmit();
-    beep(win?"ok":"no"); if(win)burst(80);
+    if(win){ fanfare(false); burst(110); Voice.say(pickOne([`${H.players[win].name} was the fastest!`,`Lightning fast, ${H.players[win].name}!`,`${H.players[win].name} takes it!`])); } else { beep("no"); Voice.say("Ooh, nobody got that one!"); }
     return;
   }
   Object.entries(H.players).forEach(([k,p])=>{
@@ -837,7 +892,15 @@ function hostReveal(){
     H.res[k]={i:a.i,ok,pts};
   });
   renderHostRev(); hostEmit();
-  const anyOk=Object.values(H.res).some(r=>r.ok); beep(anyOk?"ok":"no"); if(anyOk)burst(80);
+  const anyOk=Object.values(H.res).some(r=>r.ok); {
+    const okN=Object.entries(H.res).filter(([k,r])=>r.ok).map(([k])=>H.players[k].name);
+    const wN=Object.entries(H.res).filter(([k,r])=>r.wedge).map(([k])=>H.players[k].name);
+    const total=Object.keys(H.res).length;
+    if(typeof isWedge==="function"&&isWedge()&&H.wedgeWinner){ fanfare(true); burst(200); Voice.say(`We have a winner! ${H.players[H.wedgeWinner].name} filled the pie!`); }
+    else if(wN.length){ fanfare(true); burst(150); Voice.say(`${joinNames(wN)} ${wN.length>1?"win":"wins"} the ${CATS[H.wcat].n} wedge!`); }
+    else if(okN.length){ fanfare(false); burst(okN.length===total?140:90); Voice.say(okN.length===total&&total>1?pickOne(["Everyone got it right!","Brilliant, all correct!"]):pickOne([`${joinNames(okN)} got it right!`,`Well done, ${joinNames(okN)}!`])); }
+    else { beep("no"); Voice.say(pickOne(["Ooh, nobody got that one!","Tough one! Nobody got it."])); }
+  }
 }
 function sortedPlayers(){return Object.entries(H.players).sort((a,b)=>b[1].score-a[1].score)}
 function boardHTML(list,off=0){
@@ -873,7 +936,7 @@ function hostFinal(){
   $("#hPodium").innerHTML=order.map((e,k)=>{ if(!e) return `<div class="pod"></div>`; const p=e[1],place=[2,1,3][k];
     return `<div class="pod p${place}">${place===1?'<div class="crown">👑</div>':""}<div class="face">${esc(p.emoji)}</div><div class="pname">${esc(p.name)}</div><div class="ppts">${p.score} pts</div><div class="block">${place}</div></div>`}).join("");
   $("#hFinBoard").innerHTML=s.length>3?boardHTML(s.slice(3),3):"";
-  show("#s-hfin"); beep("win"); burst(220); hostEmit();
+  show("#s-hfin"); Music.stop(); fanfare(true); burst(260); hostEmit(); { const w=sortedPlayers()[0]; if(w) Voice.say(`And the winner is... ${w[1].name}! Congratulations!`); } setTimeout(()=>{ if(H&&H.phase==="fin") Music.start(); },5000);
 }
 /* the whole game state lives at games/CODE/state */
 function hostEmit(){
@@ -1074,7 +1137,7 @@ function renderPRev(st){
     <p class="center" style="font-size:1.3rem">${sub}</p>
     ${sc?`<div class="panel center" style="margin-top:20px"><div class="muted">You're in</div><div style="font-size:3rem;font-weight:700">${sc.rank===1?"🥇":sc.rank===2?"🥈":sc.rank===3?"🥉":"#"+sc.rank}</div><div class="muted">${sc.s} points</div></div>`:""}
     <p class="center muted">Look at the big screen! 📺</p>`;
-  if(r.ok){beep("ok");burst(60)}else beep("no");
+  if(r.ok){fanfare(false);burst(90)}else beep("no");
   try{navigator.vibrate&&navigator.vibrate(r.ok?80:[60,60,60])}catch(e){}
 }
 function renderPFin(st){
@@ -1083,7 +1146,7 @@ function renderPFin(st){
   $("#ppBody").innerHTML=`<div class="bigface" style="background:var(--card)">${medal}</div>
     <div class="turnname" style="font-size:2.2rem">${sc?(sc.rank===1&&sc.s>0?"You won!!":`You came #${sc.rank}`):"Game over!"}</div>
     <p class="sub">${sc?sc.s+" points":""}</p><p class="center muted">Waiting for the host to start another game…</p>`;
-  if(sc&&sc.rank===1&&sc.s>0){beep("win");burst(200)}
+  if(sc&&sc.rank===1&&sc.s>0){fanfare(true);burst(240)}
 }
 </script>
 </body>
