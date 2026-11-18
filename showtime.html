@@ -112,11 +112,17 @@ select{padding:10px;border-radius:10px;border:1px solid var(--line);background:#
 @keyframes zoom{from{transform:scale(.2)}}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:30}
 .muted{color:var(--muted)}
+.talk{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translate(-50%,30px);opacity:0;z-index:25;background:rgba(0,0,0,.6);border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:14px;font-weight:700;transition:.25s;pointer-events:none}
+.talk.on{opacity:1;transform:translate(-50%,0)}
+.toast{position:fixed;left:14px;right:14px;top:calc(14px + env(safe-area-inset-top));z-index:40;background:#ff4d4d;color:#fff;border-radius:16px;padding:14px 16px;font-size:16px;line-height:1.35;box-shadow:0 10px 30px rgba(0,0,0,.4);transform:translateY(-150%);transition:.35s}
+.toast.show{transform:none}
 .hint{font-size:13px;color:var(--muted);text-align:center;margin-top:8px}
 </style>
 </head>
 <body>
 <canvas id="confetti"></canvas>
+<div class="talk" id="talk">🎙️ The host is talking…</div>
+<div class="toast" id="toast" onclick="this.classList.remove('show')"></div>
 <div id="app">
 
  <!-- TITLE -->
@@ -336,12 +342,24 @@ function loadVoices(){if(!canSpeak)return;voices=speechSynthesis.getVoices().fil
  if(idx>=0)sel.value=idx;else if(keep)sel.value=keep;else{const pref=voices.findIndex(v=>/en-GB/i.test(v.lang)&&/Daniel|Arthur|Male|George/i.test(v.name));if(pref>=0)sel.value=pref;}
  S.voice=sel.value===""?null:voices[+sel.value];}
 if(canSpeak){loadVoices();speechSynthesis.onvoiceschanged=loadVoices}
-function say(text,{rate=1.02,pitch=1}={}){return new Promise(res=>{
- if(!S.voiceOn||!canSpeak){res();return}
- const u=new SpeechSynthesisUtterance(text);if(S.voice){u.voice=S.voice;u.lang=S.voice.lang}else u.lang="en-GB";u.rate=rate;u.pitch=pitch;
- let done=false;const fin=()=>{if(done)return;done=true;clearTimeout(t);res()};
- const t=setTimeout(fin,2000+text.length*85/rate);u.onend=fin;u.onerror=fin;speechSynthesis.speak(u);});}
-function hush(){if(canSpeak)speechSynthesis.cancel()}
+let lastHush=0,speechWorked=false,warned=false;
+function makeUtt(text,rate=1.02,pitch=1){const u=new SpeechSynthesisUtterance(text);if(S.voice){u.voice=S.voice;u.lang=S.voice.lang}else u.lang="en-GB";
+ u.rate=rate;u.pitch=pitch;u.volume=1;window._utt=u;return u}// keep a reference so the phone doesn't drop it
+function warnNoVoice(){if(warned||speechWorked)return;warned=true;const t=$("toast");
+ t.innerHTML="🔇 The host can't talk on this phone.<br>Turn off silent mode, turn the volume up, and open the link in <b>Safari</b> or <b>Chrome</b> (not inside another app).";
+ t.classList.add("show");setTimeout(()=>t.classList.remove("show"),9000)}
+function sayOne(text,{rate=1.02,pitch=1}={}){return new Promise(res=>{
+ if(!S.voiceOn||!canSpeak||!text){res();return}
+ const u=makeUtt(text,rate,pitch);let done=false,started=false;
+ const fin=()=>{if(done)return;done=true;clearTimeout(t);$("talk").classList.remove("on");res()};
+ u.onstart=()=>{started=true;speechWorked=true;$("talk").classList.add("on")};u.onend=fin;u.onerror=fin;
+ const t=setTimeout(fin,2500+text.length*85/rate);
+ setTimeout(()=>{if(!started&&!done)warnNoVoice()},3000);
+ const go=()=>{try{speechSynthesis.resume()}catch(e){}speechSynthesis.speak(u)};
+ const since=Date.now()-lastHush;if(since<200)setTimeout(go,200-since);else go();});}
+let speechGen=0;
+async function say(parts,opts){const g=speechGen;for(const p of [].concat(parts)){if(g!==speechGen)break;await sayOne(p,opts)}}
+function hush(){speechGen++;if(canSpeak){speechSynthesis.cancel();lastHush=Date.now()}$("talk").classList.remove("on")}
 
 const LINES={
  up:["{n}, you're up!","Next up, {n}!","{n}, the spotlight is on you!","Here comes {n}!","{n}, are you ready?"],
@@ -382,11 +400,15 @@ $("btnAddPlayer").onclick=()=>{const n=readNames();if(n.length<6){n.push("");ren
 $("selVoice").onchange=()=>{S.voice=$("selVoice").value===""?null:voices[+$("selVoice").value]};
 $("chkVoice").onchange=e=>{S.voiceOn=e.target.checked;if(!S.voiceOn)hush()};
 $("chkSound").onchange=e=>{S.soundOn=e.target.checked};
-$("btnTestVoice").onclick=()=>{ac();S.voiceOn=$("chkVoice").checked;hush();SFX.reveal();say("Good evening, and welcome to Quiz Night!")};
+$("btnTestVoice").onclick=()=>{ac();S.voiceOn=true;$("chkVoice").checked=true;if(!canSpeak){warnNoVoice();return}
+ speechSynthesis.cancel();warned=false;speechWorked=false;const u=makeUtt("Good evening, and welcome to Quiz Night!");
+ u.onstart=()=>{speechWorked=true};setTimeout(()=>{if(!speechWorked)warnNoVoice()},3000);speechSynthesis.speak(u)};
 
 $("btnStart").onclick=async()=>{ac();S.soundOn=$("chkSound").checked;S.voiceOn=$("chkVoice").checked;
- if(canSpeak){const u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u)} // unlocks speech on phones
- SFX.jingle();show("s-setup");await sleep(600);say("Ladies and gentlemen, welcome to Quiz Night! Who's playing tonight?");};
+ // Phones only allow talking if the first speech starts right inside a tap, so speak immediately here
+ if(canSpeak&&S.voiceOn){loadVoices();speechSynthesis.cancel();const u=makeUtt("Ladies and gentlemen, welcome to Quiz Night! Who's playing tonight?");
+  u.onstart=()=>{speechWorked=true};setTimeout(()=>{if(!speechWorked)warnNoVoice()},3500);speechSynthesis.speak(u)}
+ SFX.jingle();show("s-setup");};
 
 $("btnGo").onclick=()=>{ac();hush();
  const names=readNames().map((n,i)=>n||("Player "+(i+1)));
@@ -409,13 +431,13 @@ async function startPass(){
  if(fin){SFX.drumroll(1.2);await sleep(1300);if(id!==S.flow)return;SFX.fanfare();await say("This is it! The final round! Every answer is worth double points!");if(id!==S.flow)return}
  say(S.players.length>1?line("up",p.name):"Here's your next question!");
 }
-$("btnReady").onclick=()=>{ac();hush();startQuestion()};
+$("btnReady").onclick=()=>{ac();hush();if(canSpeak){try{speechSynthesis.resume()}catch(e){}}startQuestion()};
 
 function pickQuestion(){let pool=QUESTIONS.map((q,i)=>i).filter(i=>!S.used.has(i));if(!pool.length){S.used.clear();pool=QUESTIONS.map((q,i)=>i)}
  const i=rand(pool);S.used.add(i);const q=QUESTIONS[i];const order=[0,1,2,3].sort(()=>Math.random()-.5);
  return{c:q.c,q:q.q,a:order.map(k=>q.a[k]),correct:order.indexOf(0)};}
 
-function readText(q){return q.q+" … "+q.a.map((a,i)=>LETTERS[i]+": "+a+".").join(" … ")}
+function readText(q){return[q.q,q.a.map((a,i)=>LETTERS[i]+": "+a+".").join(" … ")]}
 
 async function startQuestion(){
  const id=++S.flow,p=curPlayer();S.phase="intro";S.picked=-1;stopTimer();
