@@ -177,6 +177,12 @@ canvas#confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 a.rolecard{color:inherit;text-decoration:none;display:block}
 #s-pjoin.quick .opt-hide{display:none}
 #s-pjoin:not(.quick) .quick-only{display:none}
+.wheelwrap{position:relative;width:min(72vw,340px);margin:14px auto 0}
+.wheel{transition:transform 3.2s cubic-bezier(.17,.67,.2,1)}
+.wheel svg,.wheelwrap svg{width:100%;height:auto;display:block}
+.pointer{position:absolute;top:-22px;left:50%;transform:translateX(-50%);font-size:2.2rem;z-index:2;text-shadow:0 3px 8px #000}
+.wbanner{border-radius:16px;padding:10px 12px;text-align:center;margin-bottom:12px;font-weight:600;border:2px solid}
+.mypie{display:flex;flex-direction:column;align-items:center;gap:6px;margin:16px 0}
 .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:60;background:var(--card2);border:2px solid var(--green);border-radius:999px;padding:12px 22px;font-size:1.2rem;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:pop .3s ease;transition:opacity .5s,transform .5s}
 .toast.out{opacity:0;transform:translateX(-50%) translateY(-20px)}
 .vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:12px 0}
@@ -264,7 +270,7 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
     </div>
     <p class="hint" id="hModeHint"></p>
   </div>
-  <div class="panel">
+  <div class="panel" id="hVotePanel">
     <h2>🗳️ Topic vote</h2>
     <div class="seg" id="hVote"></div>
     <p class="hint">Everyone picks their favourite topics on their phone, and the ones with the most votes win. Ties are settled with a new vote between the tied topics, again and again (after 3 tie-breaks it's drawn by lot).</p>
@@ -297,6 +303,15 @@ a.rolecard{color:inherit;text-decoration:none;display:block}
   <p class="sub" id="hvrSub"></p>
   <div id="hvrList"></div>
   <div class="stack"><button class="btn" id="hvrGo">Start the quiz 🚀</button></div>
+</section>
+
+<!-- HOST: WEDGE HUNT SPIN -->
+<section class="screen" id="s-hspin">
+  <div class="topbar"><span class="tag" id="hsRound"></span><button class="iconbtn" id="hQuit3" title="End game">✕</button></div>
+  <h1 style="font-size:clamp(1.8rem,6vw,2.8rem)" id="hsTitle">🎡 Spinning…</h1>
+  <div class="wheelwrap"><div class="pointer">🔻</div><div id="hsWheel" class="wheel"></div></div>
+  <div id="hsResult" class="center" style="font-size:2.2rem;font-weight:700;min-height:3rem;margin-top:14px"></div>
+  <div class="board" id="hsBoard" style="margin-top:12px"></div>
 </section>
 
 <!-- HOST: QUESTION -->
@@ -548,7 +563,7 @@ function renderNotifyBtn(){
 }
 $("#hNotify").onclick=async()=>{ try{ await Notification.requestPermission(); }catch(e){} renderNotifyBtn(); };
 function alertBox(msg){ $("#noFb").innerHTML=esc(msg); $("#noFb").style.display=""; }
-function stopHost(){clearInterval(hTick);clearInterval(hvTick);H=null}
+function stopHost(){clearInterval(hTick);clearInterval(hvTick);if(H)clearTimeout(H.spinT);H=null}
 
 function renderHostSettings(){
   seg($("#hRounds"),[[5,"5"],[8,"8"],[10,"10"],[15,"15"]],()=>hSettings.rounds,v=>{hSettings.rounds=v;hSave()});
@@ -644,20 +659,82 @@ function draw(level){
 }
 $("#hStart").onclick=()=>{ if(!H) return; beep("tick"); clearInterval(hAutoTick); H.autoMin=0; H.startAt=null; $("#hAutoCount").style.display="none";
   Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={};
-  if(hSettings.vote!==false) startVote(); else { H.cats=null; hostNextQ(); } };
-$("#hAgain").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; hostNextQ(); };
-$("#hRevote").onclick=()=>{ if(!H) return; Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; startVote(); };
+  if(isWedge()) startWedge(); else if(hSettings.vote!==false) startVote(); else { H.cats=null; hostNextQ(); } };
+$("#hAgain").onclick=()=>{ if(!H) return; if(isWedge()) return startWedge(); Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; hostNextQ(); };
+$("#hRevote").onclick=()=>{ if(!H) return; if(isWedge()) return startWedge(); Object.values(H.players).forEach(p=>{p.score=0;p.right=0}); H.round=0; H.decks={}; startVote(); };
 
 /* ======================= GAME MODE ======================= */
 function renderHostMode(){
   const m=hSettings.mode||"level";
-  seg($("#hMode"),[["level","🎓 Own level — everyone scores"],["fast","⚡ Same question — fastest wins"]],()=>hSettings.mode||"level",v=>{hSettings.mode=v;hSave();renderHostMode()});
+  seg($("#hMode"),[["level","🎓 Own level — everyone scores"],["fast","⚡ Same question — fastest wins"],["wedge","🥧 Wedge Hunt"]],()=>hSettings.mode||"level",v=>{hSettings.mode=v;hSave();renderHostMode()});
   seg($("#hFastLvl"),[["e","Easy"],["m","Medium"],["h","Hard"],["mix","Mix"]],()=>hSettings.fastLevel||"mix",v=>{hSettings.fastLevel=v;hSave()});
   $("#hFastBox").style.display = m==="fast" ? "" : "none";
   $("#hModeHint").textContent = m==="fast"
     ? "Everyone gets the same question. The first correct answer wins 10 points — a wrong answer locks you out of that question."
+    : m==="wedge"
+    ? "A wheel picks one of 6 colour categories each round. Everyone answers at their own level — get it right to win that colour's wedge. First to fill their pie with all 6 wins!"
     : "Everyone gets their own question at their own level. Right answers score 10, plus up to 5 bonus points for speed.";
+  const vp=$("#hVotePanel"), cp=$("#hCatsPanel");
+  if(m==="wedge"){ vp.style.display="none"; cp.style.display="none"; }
+  else { vp.style.display=""; renderHostVoteSetting(); }
 }
+/* ======================= WEDGE HUNT ======================= */
+const WEDGES = window.QUIZ_WEDGES || [
+  {c:"geo",col:"#4da3ff"},{c:"iceland",col:"#ff5c7a"},{c:"science",col:"#3ee08f"},
+  {c:"music",col:"#ffd166"},{c:"sports",col:"#ff9f5a"},{c:"nature",col:"#b18cff"}];
+const isWedge=()=> (hSettings.mode||"level")==="wedge";
+const wcol=c=>(WEDGES.find(w=>w.c===c)||{}).col||"#3dd6d0";
+function arcPath(cx,cy,r,a0,a1){ const x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);
+  return `M${cx},${cy} L${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 0 1 ${x1.toFixed(2)},${y1.toFixed(2)} Z`; }
+function pieSVG(have,size){ size=size||60; const n=WEDGES.length, r=size/2;
+  let p=WEDGES.map((w,i)=>{ const a0=i/n*2*Math.PI-Math.PI/2, a1=(i+1)/n*2*Math.PI-Math.PI/2, on=(have||[]).includes(w.c);
+    return `<path d="${arcPath(r,r,r-3,a0,a1)}" fill="${on?w.col:"#27326e"}" stroke="#0b1026" stroke-width="2"/>`; }).join("");
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${r}" cy="${r}" r="${r-1}" fill="#0b1026" stroke="#3a478f" stroke-width="2"/>${p}</svg>`; }
+function wheelSVG(){ const n=WEDGES.length, S=300, r=S/2;
+  const parts=WEDGES.map((w,i)=>{ const a0=i/n*2*Math.PI-Math.PI/2, a1=(i+1)/n*2*Math.PI-Math.PI/2, am=(a0+a1)/2;
+    const tx=r+r*.62*Math.cos(am), ty=r+r*.62*Math.sin(am), c=CATS[w.c]||{e:"❓"};
+    return `<path d="${arcPath(r,r,r-4,a0,a1)}" fill="${w.col}" stroke="#0b1026" stroke-width="4"/><text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" font-size="40" text-anchor="middle" dominant-baseline="central">${c.e}</text>`; }).join("");
+  return `<svg viewBox="0 0 ${S} ${S}"><circle cx="${r}" cy="${r}" r="${r-1}" fill="#0b1026"/>${parts}<circle cx="${r}" cy="${r}" r="22" fill="#0b1026" stroke="#fff" stroke-width="4"/></svg>`; }
+function wedgeBoardHTML(list){
+  return list.map(([k,p],i)=>`<div class="srow ${H.wedgeWinner===k?"lead":""}"><div class="rank">${H.wedgeWinner===k?"👑":i+1}</div><div class="mini" style="background:${p.color}33">${esc(p.emoji)}</div>
+    <div class="nm">${esc(p.name)}<small>${(p.wedges||[]).length} of ${WEDGES.length} wedges · ${LVL[p.level]}</small></div><div>${pieSVG(p.wedges,58)}</div></div>`).join(""); }
+function drawCat(level,cat){
+  const all=BANK[level].map((q,i)=>({q,id:level+i})).filter(x=>x.q[0]===cat);
+  if(!all.length) return draw(level);
+  let pool=all.filter(x=>!seen[x.id]); if(!pool.length){ all.forEach(x=>delete seen[x.id]); pool=all; }
+  const it=pool[Math.random()*pool.length|0]; seen[it.id]=1; store.set("fq_seen",seen);
+  const q=it.q, opts=shuffle([q[2],q[3],q[4],q[5]]); return {c:q[0],t:q[1],o:opts,k:opts.indexOf(q[2])};
+}
+function startWedge(){
+  H.cats=null; H.wedgeWinner=null; H.lastCat=null; H.round=0; H.decks={};
+  Object.values(H.players).forEach(p=>{p.wedges=[];p.score=0;p.right=0});
+  spinRound();
+}
+function spinRound(){
+  if(!H) return;
+  H.phase="spin";
+  const opts=WEDGES.map(w=>w.c).filter(c=>c!==H.lastCat);
+  const needed=opts.filter(c=>Object.values(H.players).some(p=>!(p.wedges||[]).includes(c)));
+  const pool=needed.length?needed:opts, cat=pool[Math.random()*pool.length|0];
+  H.wcat=cat; H.lastCat=cat;
+  const i=WEDGES.findIndex(w=>w.c===cat), segA=360/WEDGES.length, cur=H.spinRot||0;
+  const want=(((-(i+0.5)*segA - cur) % 360) + 360) % 360;
+  H.spinRot = cur + 360*5 + want;
+  $("#hsRound").textContent=`Round ${H.round+1}`; $("#hsTitle").textContent="🎡 Spinning…"; $("#hsResult").innerHTML="";
+  const wh=$("#hsWheel"); if(!wh.innerHTML) wh.innerHTML=wheelSVG();
+  $("#hsBoard").innerHTML=wedgeBoardHTML(sortedPlayers());
+  show("#s-hspin");
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ wh.style.transform=`rotate(${H.spinRot}deg)`; }));
+  hostEmit(); beep("tick");
+  clearTimeout(H.spinT);
+  H.spinT=setTimeout(()=>{
+    if(!H||H.phase!=="spin") return;
+    const c=CATS[cat]; $("#hsTitle").textContent="🎯 This round:";
+    $("#hsResult").innerHTML=`<span style="color:${wcol(cat)}">${c.e} ${esc(c.n)}</span>`; beep("ding");
+    H.spinT=setTimeout(()=>{ if(H&&H.phase==="spin") hostNextQ(); },2000);
+  },3400);
+}
+$("#hQuit3").onclick=()=>{ if(H){ clearTimeout(H.spinT); hostFinal(); } };
 const lvlOf = p => (H&&H.cur&&H.cur.fast) ? H.cur.lvl : p.level;
 
 /* ======================= TOPIC VOTE ======================= */
@@ -766,10 +843,10 @@ function hostNextQ(){
   } else {
     const levels=[...new Set(Object.values(H.players).filter(p=>p.live!==false).map(p=>p.level))];
     if(!levels.length) levels.push("m");
-    levels.forEach(l=>qs[l]=draw(l));
+    levels.forEach(l=>qs[l]= isWedge() ? drawCat(l,H.wcat) : draw(l));
   }
   H.cur={qs,fast,lvl:flv,closeAt:null,start:Date.now(),dur:hSettings.timer*1000,endsAt:FB.now()+hSettings.timer*1000};
-  $("#hqRound").textContent=`Question ${H.round} of ${hSettings.rounds}`;
+  $("#hqRound").textContent= isWedge() ? `Round ${H.round} · ${CATS[H.wcat].e} ${CATS[H.wcat].n}` : `Question ${H.round} of ${hSettings.rounds}`;
   show("#s-hq"); renderHostMine(); renderHostQ(); hostEmit();
   clearInterval(hTick); let lastS=null;
   hTick=setInterval(()=>{
@@ -837,10 +914,22 @@ function hostReveal(){
     if(ok){p.score+=pts;p.right++}
     H.res[k]={i:a.i,ok,pts};
   });
+  if(isWedge()){
+    const cat=H.wcat;
+    Object.entries(H.res).forEach(([k,r])=>{ const p=H.players[k]; if(!p) return; p.wedges=p.wedges||[];
+      if(r.ok && !p.wedges.includes(cat)){ p.wedges.push(cat); r.wedge=true; } else if(r.ok) r.had=true; });
+    const done=Object.entries(H.players).filter(([k,p])=>(p.wedges||[]).length>=WEDGES.length);
+    if(done.length){ // more than one finished this round? fastest correct answer takes it
+      done.sort((a,b)=>((H.answers[a[0]]||{}).t||9e15)-((H.answers[b[0]]||{}).t||9e15));
+      H.wedgeWinner=done[0][0];
+    }
+  }
   renderHostRev(); hostEmit();
   const anyOk=Object.values(H.res).some(r=>r.ok); beep(anyOk?"ok":"no"); if(anyOk)burst(80);
 }
-function sortedPlayers(){return Object.entries(H.players).sort((a,b)=>b[1].score-a[1].score)}
+function sortedPlayers(){
+  if(isWedge()) return Object.entries(H.players).sort((a,b)=>((b[0]===H.wedgeWinner)-(a[0]===H.wedgeWinner))||((b[1].wedges||[]).length-(a[1].wedges||[]).length)||(b[1].score-a[1].score));
+  return Object.entries(H.players).sort((a,b)=>b[1].score-a[1].score)}
 function boardHTML(list,off=0){
   const max=Math.max(1,...list.map(([k,p])=>p.score));
   return list.map(([k,p],i)=>`<div class="srow ${i+off===0&&p.score>0?"lead":""}"><div class="rank">${i+off===0&&p.score>0?"👑":i+off+1}</div>
@@ -849,12 +938,14 @@ function boardHTML(list,off=0){
     <div class="pts">${p.score}</div></div>`).join("");
 }
 function renderHostRev(){
-  $("#hrRound").textContent=`Question ${H.round} of ${hSettings.rounds}`;
+  $("#hrRound").textContent= isWedge() ? `Round ${H.round}` : `Question ${H.round} of ${hSettings.rounds}`;
   $("#hrGroups").innerHTML=["e","m","h"].filter(l=>H.cur.qs[l]).map(l=>{
     const q=H.cur.qs[l];
     const rows=Object.entries(H.players).filter(([k,p])=>lvlOf(p)===l&&H.res[k]).map(([k,p])=>{
       const r=H.res[k];
-      const badge = H.cur.fast
+      const badge = isWedge()
+        ? (r.wedge?`<span class="ok" style="color:${wcol(H.wcat)}">🥧 +wedge</span>`:r.had?`<span class="muted">✓ had it</span>`:`<span class="no">✗</span>`)
+        : H.cur.fast
         ? (r.first?`<span class="ok">⚡ First! +${r.pts}</span>`:r.ok?`<span class="muted">✓ too slow</span>`:`<span class="no">✗</span>`)
         : (r.ok?`<span class="ok">✓ +${r.pts}</span>`:`<span class="no">✗</span>`);
       return `<div class="res"><span class="f">${esc(p.emoji)}</span><span class="n">${esc(p.name)}<br><small class="muted">${r.i<0?"no answer":esc(q.o[r.i])}</small></span>${badge}</div>`;
@@ -862,29 +953,37 @@ function renderHostRev(){
     return `<div class="revgroup"><div class="qcat">${CATS[q.c].e} ${CATS[q.c].n} <span class="tag">${LVL[l]}</span></div>
       <div class="rq">${esc(q.t)}</div><div class="ra">✔ ${esc(q.o[q.k])}</div>${rows}</div>`;
   }).join("");
-  $("#hrBoard").innerHTML=boardHTML(sortedPlayers());
-  $("#hNext").textContent=H.round>=hSettings.rounds?"See the results 🏆":"Next question ➜";
+  $("#hrBoard").innerHTML= isWedge() ? wedgeBoardHTML(sortedPlayers()) : boardHTML(sortedPlayers());
+  $("#hNext").textContent= isWedge() ? (H.wedgeWinner?"🏆 We have a winner!":"🎡 Spin the wheel") : H.round>=hSettings.rounds?"See the results 🏆":"Next question ➜";
   show("#s-hrev");
 }
-$("#hNext").onclick=()=>{ if(!H) return; if(H.round>=hSettings.rounds) hostFinal(); else hostNextQ(); };
+$("#hNext").onclick=()=>{ if(!H) return;
+  if(isWedge()){ if(H.wedgeWinner||H.round>=60) hostFinal(); else spinRound(); return; }
+  if(H.round>=hSettings.rounds) hostFinal(); else hostNextQ(); };
 $("#hQuit").onclick=$("#hQuit2").onclick=()=>{ if(H){clearInterval(hTick);hostFinal()} };
 function hostFinal(){
   H.phase="fin";
   const s=sortedPlayers(), order=[s[1],s[0],s[2]];
   $("#hPodium").innerHTML=order.map((e,k)=>{ if(!e) return `<div class="pod"></div>`; const p=e[1],place=[2,1,3][k];
-    return `<div class="pod p${place}">${place===1?'<div class="crown">👑</div>':""}<div class="face">${esc(p.emoji)}</div><div class="pname">${esc(p.name)}</div><div class="ppts">${p.score} pts</div><div class="block">${place}</div></div>`}).join("");
-  $("#hFinBoard").innerHTML=s.length>3?boardHTML(s.slice(3),3):"";
+    return `<div class="pod p${place}">${place===1?'<div class="crown">👑</div>':""}<div class="face">${esc(p.emoji)}</div><div class="pname">${esc(p.name)}</div><div class="ppts">${isWedge()?pieSVG(p.wedges,54):p.score+" pts"}</div><div class="block">${place}</div></div>`}).join("");
+  $("#hFinBoard").innerHTML= isWedge() ? wedgeBoardHTML(s.slice(3)) : (s.length>3?boardHTML(s.slice(3),3):"");
+  $("#hAgain").textContent = isWedge() ? "Play Wedge Hunt again 🥧" : "Play again — same topics 🔁";
+  $("#hRevote").style.display = isWedge() ? "none" : "";
   show("#s-hfin"); beep("win"); burst(220); hostEmit();
 }
 /* the whole game state lives at games/CODE/state */
 function hostEmit(){
   if(!H||!FB) return;
-  const sc=sortedPlayers().map(([k,p])=>({k,n:p.name,e:p.emoji,s:p.score}));
+  const sc=sortedPlayers().map(([k,p])=>({k,n:p.name,e:p.emoji,s:p.score,w:(p.wedges||[]).length}));
   const st={ph:H.phase,code:H.code,round:H.round,total:hSettings.rounds,sc};
   if(H.phase==="lobby"){ st.pl=Object.keys(H.players); if(H.startAt) st.startAt=H.startAt; }
   if(H.phase==="q"||H.phase==="rev"){
     st.rid=H.rid; st.lv={}; Object.entries(H.players).forEach(([k,p])=>st.lv[k]=lvlOf(p));
     if(H.cur.fast){ st.fast=true; st.flv=H.cur.lvl; if(H.phase==="rev"&&H.cur.winner) st.win=H.cur.winner; }
+  }
+  if(isWedge() && H.phase!=="lobby"){
+    st.wedge=true; st.wcat=H.wcat; st.pies={}; Object.entries(H.players).forEach(([k,p])=>st.pies[k]=(p.wedges||[]).slice());
+    if(H.wedgeWinner) st.wwin=H.wedgeWinner;
   }
   if(H.phase==="q"){
     const qs={}; Object.entries(H.cur.qs).forEach(([l,q])=>qs[l]={c:q.c,t:q.t,o:q.o});
@@ -966,7 +1065,9 @@ function myScore(st){ const L=st.sc||[]; const m=L.find(x=>x.k===P.key); if(!m) 
 function playerState(st){
   if(!P||!st||typeof st!=="object") return;
   const prev=P.state; P.state=st;
-  const sc=myScore(st); $("#ppScore").textContent=`${sc?sc.s:0} pts`;
+  const sc=myScore(st);
+  if(st.wedge){ const me_=(st.sc||[]).find(x=>x.k===P.key); $("#ppScore").textContent=`🥧 ${me_?me_.w||0:0} / ${WEDGES.length}`; }
+  else $("#ppScore").textContent=`${sc?sc.s:0} pts`;
   if(st.ph==="lobby"){
     const inList=(st.pl||[]).includes(P.key);
     const sa=st.startAt||null;
@@ -980,6 +1081,14 @@ function playerState(st){
           const left=Math.max(0,Math.ceil((sa-FB.now())/1000)); el.textContent=`${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`;};
         t(); pTimer=setInterval(t,500);
       }
+    }
+  }
+  else if(st.ph==="spin"){
+    if(P.spinR!==st.round){ P.spinR=st.round; clearInterval(pTimer);
+      const mine=(st.pies&&st.pies[P.key])||[];
+      $("#ppBody").innerHTML=`<div class="turnname" style="font-size:2rem;margin-top:10px">🎡 Spinning the wheel…</div>
+        <div class="mypie">${pieSVG(mine,150)}<div class="muted">Your pie: ${mine.length} of ${WEDGES.length}</div></div><div id="ppSpin" class="center" style="font-size:1.8rem;font-weight:700"></div>`;
+      const c=CATS[st.wcat]; setTimeout(()=>{ const el=$("#ppSpin"); if(el&&c) el.innerHTML=`<span style="color:${wcol(st.wcat)}">${c.e} ${esc(c.n)}</span>`; },3400);
     }
   }
   else if(st.ph==="vote"){
@@ -1034,7 +1143,10 @@ function renderPVote(st){
 }
 function renderPQ(st,q){
   const c=CATS[q.c]||{e:"❓",n:""};
-  $("#ppBody").innerHTML=(st.fast?`<div class="banner" style="padding:8px">⚡ <b>Same question for everyone</b> — first right answer wins!</div>`:"")+`<div class="progress">Question ${st.round} of ${st.total} · <b id="ppT"></b></div>
+  const wc=st.wedge?CATS[st.wcat]:null;
+  $("#ppBody").innerHTML=(st.fast?`<div class="banner" style="padding:8px">⚡ <b>Same question for everyone</b> — first right answer wins!</div>`:"")+
+    (wc?`<div class="wbanner" style="border-color:${wcol(st.wcat)};color:${wcol(st.wcat)}">🥧 Answer right to win the ${wc.e} ${esc(wc.n)} wedge!</div>`:"")+
+    `<div class="progress">${st.wedge?`Round ${st.round}`:`Question ${st.round} of ${st.total}`} · <b id="ppT"></b></div>
     <div class="qcard"><div class="qcat">${c.e} ${esc(c.n)}</div><div class="qtext">${esc(q.t)}</div></div>
     <div class="opts" id="ppOpts"></div><div id="ppLock"></div>`;
   const o=$("#ppOpts");
@@ -1071,6 +1183,16 @@ function renderPRev(st){
     head = r.ok?"Correct! 🎉":r.i<0?"Too slow! 🐢":"Not this time 🙈";
     sub = r.ok?`+${r.pts} points`:`The answer was <b style="color:var(--green)">${esc(correct)}</b>`;
   }
+  if(st.wedge){
+    const mine=(st.pies&&st.pies[P.key])||[], c=CATS[st.wcat]||{e:"",n:""};
+    if(r.wedge) sub=`🥧 You won the <b style="color:${wcol(st.wcat)}">${c.e} ${esc(c.n)}</b> wedge!`;
+    else if(r.ok) sub=`You already had the ${c.e} ${esc(c.n)} wedge`;
+    $("#ppBody").innerHTML=`<div class="result ${r.ok?"ok":"no"}">${head}</div><p class="center" style="font-size:1.25rem">${sub}</p>
+      <div class="mypie">${pieSVG(mine,150)}<div class="muted">${mine.length} of ${WEDGES.length} wedges${st.wwin?(st.wwin===P.key?" — you filled your pie! 🏆":""):""}</div></div>
+      <p class="center muted">Look at the big screen! 📺</p>`;
+    if(r.ok){beep("ok");burst(r.wedge?90:30)}else beep("no");
+    return;
+  }
   $("#ppBody").innerHTML=`<div class="result ${r.ok?"ok":"no"}">${head}</div>
     <p class="center" style="font-size:1.3rem">${sub}</p>
     ${sc?`<div class="panel center" style="margin-top:20px"><div class="muted">You're in</div><div style="font-size:3rem;font-weight:700">${sc.rank===1?"🥇":sc.rank===2?"🥈":sc.rank===3?"🥉":"#"+sc.rank}</div><div class="muted">${sc.s} points</div></div>`:""}
@@ -1079,6 +1201,14 @@ function renderPRev(st){
   try{navigator.vibrate&&navigator.vibrate(r.ok?80:[60,60,60])}catch(e){}
 }
 function renderPFin(st){
+  if(st.wedge){
+    const mine=(st.pies&&st.pies[P.key])||[], won=st.wwin===P.key, w=(st.sc||[]).find(x=>x.k===st.wwin);
+    $("#ppBody").innerHTML=`<div class="turnname" style="font-size:2.2rem;margin-top:10px">${won?"🏆 You won!!":w?`${esc(w.e)} ${esc(w.n)} won!`:"Game over!"}</div>
+      <div class="mypie">${pieSVG(mine,170)}<div class="muted">You collected ${mine.length} of ${WEDGES.length} wedges</div></div>
+      <p class="center muted">Waiting for the host to start another game…</p>`;
+    if(won){beep("win");burst(220)}
+    return;
+  }
   const sc=myScore(st);
   const medal=sc?(sc.rank===1?"🏆":sc.rank===2?"🥈":sc.rank===3?"🥉":"🎈"):"🎈";
   $("#ppBody").innerHTML=`<div class="bigface" style="background:var(--card)">${medal}</div>
