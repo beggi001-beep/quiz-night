@@ -155,7 +155,7 @@ select{padding:10px;border-radius:10px;border:1px solid var(--line);background:#
   <div class="card">
    <h3>Showtime</h3>
    <div class="opt"><label for="chkVoice">🎙️ Host reads questions</label><label class="switch"><input type="checkbox" id="chkVoice" checked><span></span></label></div>
-   <div class="opt"><label for="selVoice">Host voice</label><select id="selVoice"><option value="">Default</option></select></div>
+   <div class="opt"><label for="selVoice">Host voice<br><small class="muted">⭐ = most natural</small></label><select id="selVoice"><option value="">Default</option></select></div>
    <div class="opt"><label for="chkSound">🥁 Sound effects</label><label class="switch"><input type="checkbox" id="chkSound" checked><span></span></label></div>
    <div class="opt"><label for="chkMusic">🎵 Music</label><label class="switch"><input type="checkbox" id="chkMusic" checked><span></span></label></div>
    <button class="btn ghost small" id="btnTestVoice">🔊 Test the host</button>
@@ -365,13 +365,17 @@ function playStep(i,t){const o=mGain;
 /* ---------------- HOST VOICE (built into the browser) ---------------- */
 const canSpeak="speechSynthesis" in window;
 let voices=[];
-function loadVoices(){if(!canSpeak)return;voices=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang));
- const sel=$("selVoice"),keep=sel.value;sel.innerHTML='<option value="">Default</option>';
- voices.forEach((v,i)=>{const o=document.createElement("option");o.value=i;o.textContent=v.name.replace(/Microsoft |Google /,"")+" ("+v.lang+")";sel.appendChild(o)});
- let saved=null;try{saved=localStorage.getItem("qn_voice")}catch(e){}
- const idx=voices.findIndex(v=>v.name===saved);
- if(idx>=0)sel.value=idx;else if(keep)sel.value=keep;else{const pref=voices.findIndex(v=>/en-GB/i.test(v.lang)&&/Daniel|Arthur|Male|George/i.test(v.name));if(pref>=0)sel.value=pref;}
- S.voice=sel.value===""?null:voices[+sel.value];}
+// Rank the voices the device offers: modern "natural/neural/premium" voices sound far more human; novelty voices are hidden at the bottom
+const BADV=/Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Wobble|Zarvox|Trinoids|Whisper|Jester|Organ|Superstar|Good News|\bFred\b|Junior|Ralph|Kathy|Grandma|Grandpa|Rocko|Shelley|\bFlo\b|Eddy|\bReed\b|Sandy|Hysterical|Deranged|Pipe Organ/i;
+function vScore(v){const n=v.name;let s=0;if(BADV.test(n))s-=500;if(/Natural|Neural/i.test(n))s+=120;if(/Premium/i.test(n))s+=110;if(/Enhanced/i.test(n))s+=90;
+ if(/Online/i.test(n))s+=50;if(/Google/i.test(n))s+=45;if(/en-GB/i.test(v.lang))s+=15;if(/Ryan|Thomas|Daniel|Arthur|Guy|Davis|Brian|George|Oliver|Andrew|Christopher|Male/i.test(n))s+=20;
+ if(v.localService===false)s+=10;return s}
+function loadVoices(){if(!canSpeak)return;voices=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang)).sort((a,b)=>vScore(b)-vScore(a));
+ const sel=$("selVoice");sel.innerHTML="";
+ voices.forEach((v,i)=>{const o=document.createElement("option");o.value=i;o.textContent=(vScore(v)>=80?"⭐ ":"")+v.name.replace(/Microsoft |Google /,"").replace(/ - English.*$/,"")+" ("+v.lang+")";sel.appendChild(o)});
+ if(!voices.length){sel.innerHTML='<option value="">Default</option>';S.voice=null;return}
+ let saved=null;try{saved=localStorage.getItem("qn_voice2")}catch(e){}
+ const idx=voices.findIndex(v=>v.name===saved);sel.value=idx>=0?idx:0;S.voice=voices[+sel.value];}
 if(canSpeak){loadVoices();speechSynthesis.onvoiceschanged=loadVoices}
 let lastHush=0,speechWorked=false,warned=false;
 function makeUtt(text,rate=1.02,pitch=1){const u=new SpeechSynthesisUtterance(text);if(S.voice){u.voice=S.voice;u.lang=S.voice.lang}else u.lang="en-GB";
@@ -389,19 +393,28 @@ function sayOne(text,{rate=1.02,pitch=1}={}){return new Promise(res=>{
  const go=()=>{try{speechSynthesis.resume()}catch(e){}speechSynthesis.speak(u)};
  const since=Date.now()-lastHush;if(since<200)setTimeout(go,200-since);else go();});}
 let speechGen=0;
-async function say(parts,opts){const g=speechGen;for(const p of [].concat(parts)){if(g!==speechGen)break;await sayOne(p,opts)}}
+const MOOD={hype:{rate:1.1,pitch:1.15},warm:{rate:1.02,pitch:1.05},read:{rate:.98,pitch:1.02},suspense:{rate:.86,pitch:.93},sad:{rate:.9,pitch:.88}};
+async function say(parts,opts){if(typeof opts==="string")opts=MOOD[opts];const g=speechGen;for(const p of [].concat(parts)){if(g!==speechGen)break;if(typeof p==="number"){await sleep(p);continue}await sayOne(p,opts)}}
 function hush(){speechGen++;if(canSpeak){speechSynthesis.cancel();lastHush=Date.now()}$("talk").classList.remove("on")}
 
+/* ---------------- THE HOST: "Max", a cheeky, warm game-show host ---------------- */
 const LINES={
- up:["{n}, you're up!","Next up, {n}!","{n}, the spotlight is on you!","Here comes {n}!","{n}, are you ready?"],
- right:["Correct! Brilliant!","Yes! That's right!","Absolutely correct!","Spot on!","Ding ding ding! Correct!","You nailed it!"],
- wrong:["Oh no! So close!","Ooh, that's not it!","Oh dear, wrong answer!","Unlucky!"],
- lock:["Is that your final answer? … Locked in!","Final answer… let's see!","Locked in. The moment of truth…"],
- timeup:["Time's up!","Oh no, the clock ran out!"],
- fire:["{n} is on fire! Three in a row!","Unstoppable! {n} is on fire!"]
+ intro:["Good evening, good evening, GOOD EVENING! Welcome to Quiz Night! I'm Max, your host. Tonight, someone in this room becomes a legend. Who's brave enough to play?"],
+ up:["{n}! Come on down! The spotlight is all yours.","Next up… the one… the only… {n}!","{n}, I've heard great things about you. Don't let me down!","Ooh, it's {n}'s turn. Quiet please, everybody!","{n}, take a deep breath. You've got this… probably!","Make some noise for {n}!","{n}, the whole family is watching. No pressure!"],
+ right:["YES! Correct! You absolute genius!","Ding ding ding! That is RIGHT!","Oh, beautiful! Absolutely correct!","Get in! That's the one!","Correct! Somebody give this person a medal!","Brilliant! I knew you had it in you!","That's right! The crowd goes wild!"],
+ fast:["Wow, that was quick! And correct!","Lightning fast! And right!","You didn't even blink! Correct!"],
+ wrong:["Ohhh no! So close… and yet so far.","Ouch! That's not it, I'm afraid.","Nooo! Wrong answer! The crowd is heartbroken.","Oh dear, oh dear. Not this time!","Aww. Good try, but no."],
+ leaderWrong:["Ooh! The leader stumbles! Everyone else, this is your chance!","Drama! The leader gets one wrong!"],
+ lock:[["Is that…",350,"your final answer?",450,"Locked in."],["Okay. Locked in.",350,"Hero…",250,"or zero?"],["Final answer.",450,"The moment of truth…"],["You sound very sure.",350,"Let's find out…"]],
+ timeup:["Time's up! The clock waits for no one!","Too slow! Time's up!","Bzzz! Out of time!"],
+ five:["Five seconds!","Hurry, hurry!","Tick tock! Five seconds!","Come on, come on!"],
+ fire:["{n} is ON FIRE! Three in a row! Somebody call the fire brigade!","Unstoppable! {n} is on fire!","{n} cannot be stopped! What a streak!"],
+ final:[["This is it, everybody.",450,"The final round.",400,"Every answer… is worth… DOUBLE points!"]],
+ cat:{Geography:["Geography! Grab your map!","Let's travel the world!"],Iceland:["Ooh, an Iceland question. You'd better know this one!","Iceland! Home turf. No excuses!"],
+  Science:["Science! Lab coats on, everybody!","Time to get nerdy!"],Animals:["Animals! Woof, meow, and… whatever a puffin says.","The animal kingdom!"],
+  Sports:["Sports! Warm up those brain muscles!","A sports question!"],Music:["Music! Turn it up!","A music question!"],Food:["Food! I'm getting hungry already.","Ooh, a tasty one!"],Everything:["A bit of everything!","Anything goes!"]}
 };
-const line=(k,n="")=>rand(LINES[k]).replace("{n}",n);
-
+const line=(k,n="")=>{const v=rand(LINES[k]);return Array.isArray(v)?v.map(x=>typeof x==="string"?x.replace("{n}",n):x):v.replace("{n}",n)};
 /* ---------------- CONFETTI ---------------- */
 const cv=$("confetti"),cx=cv.getContext("2d");let parts=[],raf=0;
 function resize(){cv.width=innerWidth*devicePixelRatio;cv.height=innerHeight*devicePixelRatio}
@@ -417,7 +430,7 @@ function tick(){cx.clearRect(0,0,cv.width,cv.height);
 /* ---------------- SETUP ---------------- */
 function loadSaved(){try{const d=JSON.parse(localStorage.getItem("qn_setup")||"null");if(d)return d}catch(e){}return null}
 function save(){try{localStorage.setItem("qn_setup",JSON.stringify({names:readNames(),per:$("selRounds").value,secs:$("selTime").value,voice:$("chkVoice").checked,sound:$("chkSound").checked,music:$("chkMusic").checked}));
- if(S.voice)localStorage.setItem("qn_voice",S.voice.name)}catch(e){}}
+ if(S.voice)localStorage.setItem("qn_voice2",S.voice.name)}catch(e){}}
 function renderPlayers(names){const box=$("playerList");box.innerHTML="";
  names.forEach((n,i)=>{const r=document.createElement("div");r.className="prow";
   r.innerHTML=`<span class="av">${AVATARS[i]}</span><input maxlength="14" placeholder="Player ${i+1}" value="${n.replace(/"/g,"&quot;")}"><button aria-label="Remove">✕</button>`;
@@ -428,17 +441,17 @@ function readNames(){return[...document.querySelectorAll("#playerList input")].m
  if(d){$("selRounds").value=d.per||"5";$("selTime").value=d.secs||"20";$("chkVoice").checked=d.voice!==false;$("chkSound").checked=d.sound!==false;$("chkMusic").checked=d.music!==false}
  if(!canSpeak){$("chkVoice").checked=false;$("chkVoice").disabled=true}})();
 $("btnAddPlayer").onclick=()=>{const n=readNames();if(n.length<6){n.push("");renderPlayers(n)}};
-$("selVoice").onchange=()=>{S.voice=$("selVoice").value===""?null:voices[+$("selVoice").value]};
+$("selVoice").onchange=()=>{S.voice=$("selVoice").value===""?null:voices[+$("selVoice").value];try{if(S.voice)localStorage.setItem("qn_voice2",S.voice.name)}catch(e){}$("btnTestVoice").click()};
 $("chkVoice").onchange=e=>{S.voiceOn=e.target.checked;if(!S.voiceOn)hush()};
 $("chkSound").onchange=e=>{S.soundOn=e.target.checked;if(!S.soundOn)musicStop();else musicStart("theme")};
 $("chkMusic").onchange=e=>{S.musicOn=e.target.checked;if(!S.musicOn)musicStop();else musicStart("theme")};
 $("btnTestVoice").onclick=()=>{ac();S.voiceOn=true;$("chkVoice").checked=true;if(!canSpeak){warnNoVoice();return}
- speechSynthesis.cancel();warned=false;speechWorked=false;const u=makeUtt("Good evening, and welcome to Quiz Night!");
+ speechSynthesis.cancel();warned=false;speechWorked=false;const u=makeUtt("Hello! I'm Max, your quiz host for tonight. Let's have some fun!",1.08,1.12);
  u.onstart=()=>{speechWorked=true};setTimeout(()=>{if(!speechWorked)warnNoVoice()},3000);speechSynthesis.speak(u)};
 
 $("btnStart").onclick=async()=>{ac();S.soundOn=$("chkSound").checked;S.voiceOn=$("chkVoice").checked;
  // Phones only allow talking if the first speech starts right inside a tap, so speak immediately here
- if(canSpeak&&S.voiceOn){loadVoices();speechSynthesis.cancel();const u=makeUtt("Ladies and gentlemen, welcome to Quiz Night! Who's playing tonight?");
+ if(canSpeak&&S.voiceOn){loadVoices();speechSynthesis.cancel();const u=makeUtt(LINES.intro[0],1.08,1.12);
   u.onstart=()=>{speechWorked=true};setTimeout(()=>{if(!speechWorked)warnNoVoice()},3500);speechSynthesis.speak(u)}
  S.musicOn=$("chkMusic").checked;SFX.jingle();show("s-setup");setTimeout(()=>musicStart("theme"),1500);};
 
@@ -460,8 +473,8 @@ async function startPass(){
  $("passInfo").textContent=`Question ${roundNo()} of ${S.perPlayer} · ${p.score} points`;
  const fin=isFinal()&&S.turn%S.players.length===0;$("finalBanner").classList.toggle("show",isFinal());
  SFX.whoosh();hush();if(!fin)musicStart("theme");
- if(fin){musicStop();SFX.drumroll(1.2);await sleep(1300);if(id!==S.flow)return;SFX.fanfare();await say("This is it! The final round! Every answer is worth double points!");if(id!==S.flow)return;musicStart("theme")}
- say(S.players.length>1?line("up",p.name):"Here's your next question!");
+ if(fin){musicStop();SFX.drumroll(1.2);await sleep(1300);if(id!==S.flow)return;SFX.fanfare();await say(line("final"),"suspense");if(id!==S.flow)return;musicStart("theme")}
+ say(S.players.length>1?line("up",p.name):"Here's your next question!","hype");
 }
 $("btnReady").onclick=()=>{ac();hush();if(canSpeak){try{speechSynthesis.resume()}catch(e){}}startQuestion()};
 
@@ -488,12 +501,12 @@ async function startQuestion(){
  q.a.forEach((a,i)=>{const b=document.createElement("button");b.className="ans";b.innerHTML=`<span class="L">${LETTERS[i]}</span><span></span>`;b.lastChild.textContent=a;
   b.onclick=()=>pick(i);$("answers").appendChild(b);setTimeout(()=>b.classList.add("in"),120+i*140)});
  S.phase="reading";S.timeLeft=S.secs;
- await say(readText(q));if(id!==S.flow)return;
+ await say([rand(LINES.cat[q.c]||["Here we go!"]),250].concat(readText(q)),"read");if(id!==S.flow)return;
  if(S.phase==="reading")startTimer();
 }
 $("btnSkipRead").onclick=()=>{hush()};
 $("btnRepeat").onclick=async()=>{if(!S.cur||S.phase==="reveal"||S.phase==="done")return;const id=S.flow;const wasTiming=S.phase==="timing";
- if(wasTiming){stopTimer();S.phase="reading"}hush();await sleep(80);await say(readText(S.cur));if(id===S.flow&&S.phase==="reading")startTimer()};
+ if(wasTiming){stopTimer();S.phase="reading"}hush();await sleep(80);await say(readText(S.cur),"read");if(id===S.flow&&S.phase==="reading")startTimer()};
 
 function setTimer(left,total){const c=2*Math.PI*37,fg=$("timerFg");fg.style.strokeDasharray=c;fg.style.strokeDashoffset=c*(1-left/total);$("timerNum").textContent=left;
  const danger=left<=5&&S.phase==="timing";$("timer").classList.toggle("danger",danger);document.body.classList.toggle("tense",danger)}
@@ -501,7 +514,7 @@ function startTimer(){S.phase="timing";stopTimer();setTimer(S.timeLeft,S.secs);
  S.timerId=setInterval(()=>{S.timeLeft--;setTimer(S.timeLeft,S.secs);
   if(S.timeLeft<=0){stopTimer();timeUp();return}
   if(S.timeLeft<=5)SFX.heart();SFX.tick(S.timeLeft%2===0);
-  if(S.timeLeft===5)say("Five seconds!",{rate:1.2})},1000)}
+  if(S.timeLeft===5)say(line("five"),{rate:1.25,pitch:1.15})},1000)}
 function stopTimer(){clearInterval(S.timerId);S.timerId=null;document.body.classList.remove("tense");$("timer").classList.remove("danger")}
 
 function pick(i){if(!["reading","timing","confirm"].includes(S.phase))return;hush();stopTimer();musicStop();S.phase="confirm";S.picked=i;
@@ -509,7 +522,7 @@ function pick(i){if(!["reading","timing","confirm"].includes(S.phase))return;hus
 $("btnChange").onclick=()=>{if(S.phase!=="confirm")return;S.picked=-1;[...$("answers").children].forEach(b=>b.classList.remove("picked"));$("confirm").classList.remove("show");$("tools").style.display="flex";musicStart("tension");startTimer()};
 $("btnLock").onclick=async()=>{if(S.phase!=="confirm")return;S.phase="reveal";const id=S.flow;$("confirm").classList.remove("show");
  const btns=[...$("answers").children];btns.forEach(b=>b.disabled=true);btns[S.picked].classList.add("suspense");
- await say(rand(LINES.lock),{rate:.95});if(id!==S.flow)return;
+ await say(line("lock"),"suspense");if(id!==S.flow)return;
  SFX.drumroll(2.2);await sleep(2300);if(id!==S.flow)return;btns[S.picked].classList.remove("suspense");reveal(S.picked===S.cur.correct)};
 
 function timeUp(){if(S.phase!=="timing")return;S.phase="reveal";hush();musicStop();SFX.buzzer();[...$("answers").children].forEach(b=>b.disabled=true);
@@ -522,12 +535,13 @@ async function reveal(ok,timeout=false){const id=S.flow,p=curPlayer(),q=S.cur,bt
   p.streak++;p.right++;let pts=100+S.timeLeft*5;if(isFinal())pts*=2;let fire=p.streak===3||p.streak===6;if(fire)pts+=50;p.score+=pts;
   $("qScore").textContent=p.score+" pts";ban.className="banner good";ban.textContent=fire?`🔥 ON FIRE! +${pts}`:`Correct! +${pts}`;
   SFX.fanfare();SFX.cheer();confetti();const f=document.createElement("div");f.className="points";f.textContent="+"+pts;document.body.appendChild(f);setTimeout(()=>f.remove(),1700);
-  await say(line("right"));if(id!==S.flow)return;
-  if(fire){SFX.fire();await say(line("fire",p.name));}
+  await say(S.timeLeft>=S.secs-4?line("fast"):line("right"),"hype");if(id!==S.flow)return;
+  if(fire){SFX.fire();await say(line("fire",p.name),"hype");}
  }else{
   p.streak=0;ban.className="banner bad";ban.textContent=timeout?"⏰ Time's up!":"Wrong answer!";$("s-q").classList.add("shake");setTimeout(()=>$("s-q").classList.remove("shake"),600);
   SFX.trombone();await sleep(400);if(id!==S.flow)return;
-  await say((timeout?line("timeup"):line("wrong"))+" The right answer was "+q.a[q.correct]+".");
+  const wasLeader=S.players.length>1&&p.score>0&&S.players.every(o=>o===p||o.score<p.score);
+  await say([timeout?line("timeup"):line("wrong"),200,"The right answer was… "+q.a[q.correct]+"."].concat(wasLeader?[300,line("leaderWrong")]:[]),"sad");
  }
  if(id!==S.flow)return;S.phase="done";$("btnNext").style.display="block";
 }
@@ -546,9 +560,11 @@ function renderBoard(el,animate=true){const list=[...S.players].sort((a,b)=>b.sc
 async function scoreboard(){const id=++S.flow;show("s-board");$("boardTitle").textContent=`After round ${S.turn/S.players.length|0}`;
  const list=renderBoard($("board"));SFX.whoosh();musicStart("theme");await sleep(500);if(id!==S.flow)return;
  let msg;if(S.players.length===1)msg=`You have ${list[0].score} points. Keep going!`;
- else if(list[0].score===list[1].score)msg="It's neck and neck at the top! Anything can happen!";
- else msg=`${list[0].name} is in the lead with ${list[0].score} points!`+(list[0].score-list[1].score<150?" But it's very close!":"");
- say(msg);}
+ else if(list[0].score===list[1].score)msg=["Let's check the scores…",300,"It's neck and neck at the top! I can't take the tension!"];
+ else{const last=list[list.length-1];msg=["Let's check the scores…",300,`${list[0].name} is in the lead with ${list[0].score} points!`];
+  if(list[0].score-list[1].score<150)msg.push(200,"But it's close. Very, very close!");
+  else if(list.length>2||last.score<list[0].score)msg.push(200,`${last.name}, don't give up. Comebacks happen!`)}
+ say(msg,"warm");}
 $("btnBoardNext").onclick=()=>{hush();startPass()};
 
 /* ---------------- FINALE ---------------- */
@@ -556,15 +572,15 @@ async function finale(){const id=++S.flow;show("s-final");musicStop();
  $("crown").style.display="none";$("winnerName").className="bigname";$("winnerName").textContent="";$("finalBoard").style.display="none";$("finalBtns").style.display="none";
  const list=[...S.players].sort((a,b)=>b.score-a.score),top=list[0].score,winners=list.filter(p=>p.score===top);
  $("finalTitle").textContent=S.players.length>1?"And the winner is…":"Final score…";
- await say(S.players.length>1?"The scores are in. And the winner of Quiz Night is…":"That's the end of the show! Your final score is…",{rate:.92});if(id!==S.flow)return;
+ await say(S.players.length>1?["Ladies and gentlemen…",500,"the scores are in.",500,"And the winner of Quiz Night is…"]:["That's the end of the show!",400,"Your final score is…"],"suspense");if(id!==S.flow)return;
  SFX.drumroll(3);await sleep(3100);if(id!==S.flow)return;
  const names=winners.map(w=>w.name).join(" & ");
  $("crown").style.display="block";$("winnerName").textContent=S.players.length>1?names:top+" pts";$("winnerName").classList.add("show");
  SFX.fanfare();SFX.cheer();confetti(220);setTimeout(()=>confetti(160),700);setTimeout(()=>confetti(160),1500);
  $("finalBoard").style.display="flex";renderBoard($("finalBoard"));
- if(S.players.length===1)await say(`${top} points! Great job!`);
- else if(winners.length>1)await say(`It's a tie! ${names}! You are both champions tonight!`);
- else await say(`${names}! Congratulations, you are the Quiz Night champion!`);
+ if(S.players.length===1)await say(`${top} points! Great job! Come back soon!`,"hype");
+ else if(winners.length>1)await say(`It's a tie! ${names}! You are all champions tonight! Take a bow!`,"hype");
+ else await say([`${names}!`,300,"Congratulations! You are tonight's Quiz Night champion! Take a bow!",400,"Thanks for playing, everybody. I'm Max. Good night!"],"hype");
  if(id!==S.flow)return;$("finalBtns").style.display="flex";musicStart("theme");}
 $("btnAgain").onclick=()=>{hush();S.players.forEach(p=>{p.score=0;p.streak=0;p.right=0});S.turn=0;startPass()};
 $("btnNewPlayers").onclick=()=>{hush();++S.flow;show("s-setup")};
